@@ -1,11 +1,71 @@
 @import 'tailwindcss';
 
 @theme {
-  --color-wa: #16a34a;
-  --color-wa-dark: #15803d;
-  /* chat thread background + own-message bubble (WhatsApp light theme) */
-  --color-chat: #efeae2;
-  --color-bubble-me: #d9fdd3;
+  /* muted grayscale theme: the accent is a charcoal, not WhatsApp green */
+  --color-wa: #404040;
+  --color-wa-dark: #262626;
+  /* chat thread background + own-message bubble */
+  --color-chat: #f2f2f2;
+  --color-bubble-me: #e3e3e3;
+
+  /* neutral (untinted) grays */
+  --color-gray-50: #fafafa;
+  --color-gray-100: #f5f5f5;
+  --color-gray-200: #e5e5e5;
+  --color-gray-300: #d4d4d4;
+  --color-gray-400: #a3a3a3;
+  --color-gray-500: #737373;
+  --color-gray-600: #525252;
+  --color-gray-700: #404040;
+  --color-gray-800: #262626;
+  --color-gray-900: #171717;
+  --color-gray-950: #0a0a0a;
+
+  /* every green-family utility collapses onto the same neutral ramp */
+  --color-green-50: #f4f4f4;
+  --color-green-100: #e8e8e8;
+  --color-green-200: #d9d9d9;
+  --color-green-300: #bdbdbd;
+  --color-green-400: #8f8f8f;
+  --color-green-500: #737373;
+  --color-green-600: #525252;
+  --color-green-700: #404040;
+  --color-green-800: #2e2e2e;
+  --color-green-900: #1f1f1f;
+  --color-green-950: #141414;
+  --color-emerald-50: #f4f4f4;
+  --color-emerald-100: #e8e8e8;
+  --color-emerald-200: #d9d9d9;
+  --color-emerald-300: #bdbdbd;
+  --color-emerald-400: #8f8f8f;
+  --color-emerald-500: #737373;
+  --color-emerald-600: #525252;
+  --color-emerald-700: #404040;
+  --color-emerald-800: #2e2e2e;
+  --color-emerald-900: #1f1f1f;
+  --color-emerald-950: #141414;
+  --color-teal-50: #f4f4f4;
+  --color-teal-100: #e8e8e8;
+  --color-teal-200: #d9d9d9;
+  --color-teal-300: #bdbdbd;
+  --color-teal-400: #8f8f8f;
+  --color-teal-500: #737373;
+  --color-teal-600: #525252;
+  --color-teal-700: #404040;
+  --color-teal-800: #2e2e2e;
+  --color-teal-900: #1f1f1f;
+  --color-teal-950: #141414;
+  --color-lime-50: #f4f4f4;
+  --color-lime-100: #e8e8e8;
+  --color-lime-200: #d9d9d9;
+  --color-lime-300: #bdbdbd;
+  --color-lime-400: #8f8f8f;
+  --color-lime-500: #737373;
+  --color-lime-600: #525252;
+  --color-lime-700: #404040;
+  --color-lime-800: #2e2e2e;
+  --color-lime-900: #1f1f1f;
+  --color-lime-950: #141414;
 }
 
 html,
@@ -98,12 +158,12 @@ th {
 
 /* fallback avatar chip — hue set per contact via --av-h */
 .avatar-fallback {
-  background-color: hsl(var(--av-h) 45% 84%);
-  color: hsl(var(--av-h) 45% 28%);
+  background-color: hsl(var(--av-h) 0% 86%);
+  color: hsl(var(--av-h) 0% 30%);
 }
 .dark .avatar-fallback {
-  background-color: hsl(var(--av-h) 30% 32%);
-  color: hsl(var(--av-h) 45% 85%);
+  background-color: hsl(var(--av-h) 0% 30%);
+  color: hsl(var(--av-h) 0% 86%);
 }
 
 /*
@@ -115,27 +175,60 @@ th {
 .dark {
   color-scheme: dark;
 
-  --color-wa-dark: #4ade80; /* used as accent TEXT everywhere — must be readable on dark */
-  --color-chat: #0b141a;
-  --color-bubble-me: #005c4b;
+  --color-wa: #525252;
+  --color-wa-dark: #d4d4d4; /* used as accent TEXT everywhere — must be readable on dark */
+  --color-chat: #0f0f0f;
+  --color-bubble-me: #2e2e2e;
 
   /* gray scale: backgrounds darken, text lightens */
-  --color-gray-50: #15202b;
-  --color-gray-100: #283744;
-  --color-gray-200: #36475a;
-  --color-gray-300: #46586c;
-  --color-gray-400: #8696a0;
-  --color-gray-500: #aebac1;
-  --color-gray-600: #d1d7db;
-  --color-gray-700: #e1e7eb;
-  --color-gray-800: #e9edef;
-  --color-gray-900: #f0f4f6;
+  --color-gray-50: #171717;
+  --color-gray-100: #262626;
+  --color-gray-200: #333333;
+  --color-gray-300: #404040;
+  --color-gray-400: #8a8a8a;
+  --color-gray-500: #a3a3a3;
+  --color-gray-600: #d4d4d4;
+  --color-gray-700: #e0e0e0;
+  --color-gray-800: #ebebeb;
+  --color-gray-900: #f5f5f5;
 
   /* tint backgrounds → dark tints; strong text shades → light */
-  --color-green-50: #103529;
-  --color-green-100: #14443a;
-  --color-green-200: #1b5e4f;
-  --color-green-300: #1f7a63;
+  --color-green-50: #1f1f1f;
+  --color-green-100: #2b2b2b;
+  --color-green-200: #383838;
+  --color-green-300: #4a4a4a;
+  --color-green-400: #6b6b6b;
+  --color-green-500: #a3a3a3;
+  --color-green-600: #bdbdbd;
+  --color-green-700: #d4d4d4;
+  --color-green-800: #e5e5e5;
+  --color-emerald-50: #1f1f1f;
+  --color-emerald-100: #2b2b2b;
+  --color-emerald-200: #383838;
+  --color-emerald-300: #4a4a4a;
+  --color-emerald-400: #6b6b6b;
+  --color-emerald-500: #a3a3a3;
+  --color-emerald-600: #bdbdbd;
+  --color-emerald-700: #d4d4d4;
+  --color-emerald-800: #e5e5e5;
+  --color-teal-50: #1f1f1f;
+  --color-teal-100: #2b2b2b;
+  --color-teal-200: #383838;
+  --color-teal-300: #4a4a4a;
+  --color-teal-400: #6b6b6b;
+  --color-teal-500: #a3a3a3;
+  --color-teal-600: #bdbdbd;
+  --color-teal-700: #d4d4d4;
+  --color-teal-800: #e5e5e5;
+  --color-lime-50: #1f1f1f;
+  --color-lime-100: #2b2b2b;
+  --color-lime-200: #383838;
+  --color-lime-300: #4a4a4a;
+  --color-lime-400: #6b6b6b;
+  --color-lime-500: #a3a3a3;
+  --color-lime-600: #bdbdbd;
+  --color-lime-700: #d4d4d4;
+  --color-lime-800: #e5e5e5;
   --color-red-50: #35201f;
   --color-red-100: #43292a;
   --color-red-200: #5b3134;
@@ -158,19 +251,19 @@ th {
 /* bg-white is "surface"; text-white must stay white — override the surface
    usages by class instead of remapping --color-white. */
 .dark .bg-white {
-  background-color: #1f2a33;
+  background-color: #1c1c1c;
 }
 .dark .bg-white\/70 {
-  background-color: rgb(31 42 51 / 0.7);
+  background-color: rgb(28 28 28 / 0.7);
 }
 .dark .bg-white\/80 {
-  background-color: rgb(31 42 51 / 0.8);
+  background-color: rgb(28 28 28 / 0.8);
 }
 .dark .bg-white\/90 {
-  background-color: rgb(31 42 51 / 0.9);
+  background-color: rgb(28 28 28 / 0.9);
 }
 .dark .hover\:bg-white:hover {
-  background-color: #243240;
+  background-color: #262626;
 }
 .dark .bg-black\/5 {
   background-color: rgb(255 255 255 / 0.06);
@@ -180,6 +273,13 @@ th {
 }
 .dark .hover\:bg-black\/10:hover {
   background-color: rgb(255 255 255 / 0.12);
+}
+
+/* wa-dark doubles as light accent TEXT in dark mode, so the few places that
+   paint it as a BACKGROUND (button hovers under white text) get a dark shade. */
+.dark .bg-wa-dark,
+.dark .hover\:bg-wa-dark:hover {
+  background-color: #3a3a3a;
 }
 
 /* Native <select> drop-downs are painted by the platform from the ELEMENT's own
@@ -196,6 +296,6 @@ select {
 }
 .dark select,
 .dark select option {
-  background-color: #1f2a33;
+  background-color: #1c1c1c;
   color: var(--color-gray-800);
 }

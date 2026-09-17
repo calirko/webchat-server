@@ -51,6 +51,7 @@ export function registerInstances(
 
     return {
       default: cfg.evo.instance,
+      locked: cfg.evo.locked && !!cfg.evo.instance,
       instances: visible.map((i) => ({
         name: i.name,
         connectionStatus: i.connectionStatus,
@@ -64,6 +65,7 @@ export function registerInstances(
   // New channel: create the Evolution instance and return its first QR, same
   // shape as the reconnect QR endpoint so the frontend can reuse one modal.
   app.post('/api/instances', { preHandler: requireAdmin }, async (req, reply) => {
+    if (cfg.evo.locked) return reply.code(403).send({ error: 'adding channels is disabled (EVOLUTION_LOCK_INSTANCE)' });
     const b = (req.body ?? {}) as { name?: unknown };
     const name = typeof b.name === 'string' ? b.name.trim() : '';
     if (!name || !SAFE_INSTANCE.test(name))

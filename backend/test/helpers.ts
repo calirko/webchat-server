@@ -14,6 +14,8 @@ export function testConfig(overrides: Partial<Config> = {}): Config {
     EVOLUTION_BASE: 'https://evolution.test',
     EVOLUTION_INSTANCE: 'Test',
     EVOLUTION_APIKEY: 'test-key',
+    // the suite exercises multi-channel behavior; lock tests opt back in
+    EVOLUTION_LOCK_INSTANCE: 'false',
   });
   return { ...cfg, ...overrides };
 }

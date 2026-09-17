@@ -18,6 +18,7 @@ describe('/api/settings', () => {
     expect(res).toEqual({
       base: 'https://evolution.test',
       instance: 'Test',
+      instanceLocked: false,
       apikeySet: true,
       apikeyHint: '••••-key',
       delayMin: 0,

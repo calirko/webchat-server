@@ -126,6 +126,8 @@ const idel = <T,>(path: string) => http<T>(withInstance(path), { method: 'DELETE
 export interface ServerSettings {
   base: string;
   instance: string;
+  /** EVOLUTION_LOCK_INSTANCE — the channel comes from the env and can't change. */
+  instanceLocked?: boolean;
   apikeySet: boolean;
   apikeyHint: string;
   delayMin: number;
@@ -516,7 +518,7 @@ export const api = {
   },
 
   instances: {
-    list: () => get<{ default: string; instances: InstanceInfo[] }>('/api/instances'),
+    list: () => get<{ default: string; locked?: boolean; instances: InstanceInfo[] }>('/api/instances'),
     create: (name: string) =>
       post<{ name: string; base64: string | null; pairingCode: string | null }>('/api/instances', { name }),
     remove: (name: string) => del<{ ok: boolean }>(`/api/instances/${encodeURIComponent(name)}`),

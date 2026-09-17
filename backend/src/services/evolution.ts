@@ -14,6 +14,34 @@ export interface EvolutionApi {
   call(endpoint: string, body?: unknown, method?: string): Promise<EvoResponse>;
 }
 
+/**
+ * Instance-lock guard: the reason `endpoint` may not be called while the
+ * server is capped to `cfg.instance`, or null when it's fine. Evolution paths
+ * are `/{controller}/{action}/{instance}[/...]`; the two instance-less
+ * endpoints are handled explicitly (fetchInstances must be scoped with
+ * `?instanceName=`, create is never allowed).
+ */
+export function lockedOut(endpoint: string, cfg: EvolutionConfig): string | null {
+  if (!cfg.locked || !cfg.instance) return null;
+  const q = endpoint.indexOf('?');
+  const path = q < 0 ? endpoint : endpoint.slice(0, q);
+  const query = q < 0 ? '' : endpoint.slice(q + 1);
+  const seg = path.split('/').filter(Boolean);
+  if (seg[0] === 'instance' && seg[1] === 'create') return 'creating channels is disabled (EVOLUTION_LOCK_INSTANCE)';
+  if (seg[0] === 'instance' && seg[1] === 'fetchInstances') {
+    const scoped = new URLSearchParams(query).get('instanceName');
+    return scoped === cfg.instance ? null : `channel is locked to "${cfg.instance}"`;
+  }
+  if (seg.length < 3) return null;
+  let target = seg[2]!;
+  try {
+    target = decodeURIComponent(target);
+  } catch {
+    return 'malformed instance in path';
+  }
+  return target === cfg.instance ? null : `channel is locked to "${cfg.instance}"`;
+}
+
 export class EvolutionClient implements EvolutionApi {
   constructor(
     private readonly cfg: EvolutionConfig,
@@ -31,6 +59,8 @@ export class EvolutionClient implements EvolutionApi {
 
   async call(endpoint: string, body?: unknown, method = 'POST'): Promise<EvoResponse> {
     if (!this.cfg.base) throw new Error('Evolution API not configured (EVOLUTION_BASE)');
+    const denied = lockedOut(endpoint, this.cfg);
+    if (denied) return { status: 403, ok: false, text: JSON.stringify({ error: denied }), contentType: 'application/json' };
     const m = method.toUpperCase();
     let res: Response;
     try {

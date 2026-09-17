@@ -44,7 +44,7 @@ export default function AttachPreview({ file, media, initialCaption, sending, on
       role="dialog"
       aria-modal="true"
       aria-label="Attachment preview"
-      className="fixed inset-0 z-50 flex flex-col bg-[#0b141a]/95"
+      className="fixed inset-0 z-50 flex flex-col bg-[#0f0f0f]/95"
     >
       <div className="flex items-center gap-3 px-4 py-3 text-white">
         <button
@@ -95,7 +95,7 @@ export default function AttachPreview({ file, media, initialCaption, sending, on
             placeholder="Add a caption…"
             dir="auto"
             autoFocus
-            className="min-w-0 flex-1 rounded-full bg-[#2a3942] px-4 py-2.5 text-sm text-white placeholder-gray-400 outline-none"
+            className="min-w-0 flex-1 rounded-full bg-[#2e2e2e] px-4 py-2.5 text-sm text-white placeholder-gray-400 outline-none"
           />
         )}
         <button

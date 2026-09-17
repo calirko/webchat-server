@@ -142,6 +142,9 @@ function InstanceSwitcher({ compact = false }: { compact?: boolean }) {
   const [creating, setCreating] = useState('');
   const def = q.data?.default ?? '';
   const list = q.data?.instances ?? [];
+  // server capped to one channel (EVOLUTION_LOCK_INSTANCE): nothing to switch
+  // to or add — admins keep the chip only for its status / reconnect QR
+  const locked = !!q.data?.locked;
   // an agent granted only non-default lines never reaches the default —
   // their first granted line is what calls effectively run on
   const defaultVisible = list.some((i) => i.name === def);
@@ -184,6 +187,8 @@ function InstanceSwitcher({ compact = false }: { compact?: boolean }) {
   // hidden with one visible line — unless that line isn't the default (the
   // chip then tells the agent which line they're on) or the agent is an
   // admin, who still needs the dropdown to reach "Add channel"
+  // locked: the chip only earns its space when an admin has to reconnect it
+  if (locked && (!isAdmin || list.find((i) => i.name === def)?.connectionStatus === 'open')) return null;
   if (!isAdmin && list.length < 2 && defaultVisible) return null;
   if (!isAdmin && !list.length) return null;
   const connected = list.find((i) => i.name === current)?.connectionStatus === 'open';
@@ -273,7 +278,7 @@ function InstanceSwitcher({ compact = false }: { compact?: boolean }) {
               </div>
             );
           })}
-          {isAdmin && (
+          {isAdmin && !locked && (
             <div className="border-t border-gray-100 px-3 pt-1.5 pb-1">
               {adding ? (
                 <form

@@ -17,6 +17,7 @@ function publicSettings(cfg: Config) {
   return {
     base: cfg.evo.base,
     instance: cfg.evo.instance,
+    instanceLocked: cfg.evo.locked && !!cfg.evo.instance,
     apikeySet: !!cfg.evo.apikey,
     apikeyHint: cfg.evo.apikey ? `••••${cfg.evo.apikey.slice(-4)}` : '',
     delayMin: cfg.delayMinMs / 1000,
@@ -89,7 +90,11 @@ export function registerSettings(app: FastifyInstance, deps: SettingsDeps): void
     const patch: Partial<Record<SettingKey, string>> = {};
 
     if (typeof b.base === 'string') patch.evo_base = b.base.trim().replace(/\/+$/, '');
-    if (typeof b.instance === 'string') patch.evo_instance = b.instance.trim();
+    if (typeof b.instance === 'string' && b.instance.trim() !== cfg.evo.instance) {
+      if (cfg.evo.locked)
+        return reply.code(403).send({ error: `channel is locked to "${cfg.evo.instance}" (EVOLUTION_LOCK_INSTANCE)` });
+      patch.evo_instance = b.instance.trim();
+    }
     if (typeof b.apikey === 'string' && b.apikey.trim()) patch.evo_apikey = b.apikey.trim();
 
     const delayMin = b.delayMin == null ? cfg.delayMinMs / 1000 : Number(b.delayMin);
@@ -242,10 +247,12 @@ export function registerSettings(app: FastifyInstance, deps: SettingsDeps): void
     const b = (req.body ?? {}) as Record<string, unknown>;
     const base = (typeof b.base === 'string' && b.base.trim() ? b.base.trim() : cfg.evo.base).replace(/\/+$/, '');
     const apikey = typeof b.apikey === 'string' && b.apikey.trim() ? b.apikey.trim() : cfg.evo.apikey;
-    const instance = typeof b.instance === 'string' && b.instance.trim() ? b.instance.trim() : cfg.evo.instance;
+    const instance =
+      !cfg.evo.locked && typeof b.instance === 'string' && b.instance.trim() ? b.instance.trim() : cfg.evo.instance;
     if (!base) return { ok: false, error: 'Server URL is empty' };
     try {
-      const res = await fetch(`${base}/instance/fetchInstances`, {
+      const scope = cfg.evo.locked && instance ? `?instanceName=${encodeURIComponent(instance)}` : '';
+      const res = await fetch(`${base}/instance/fetchInstances${scope}`, {
         headers: { apikey },
         signal: AbortSignal.timeout(10_000),
       });

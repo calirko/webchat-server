@@ -126,7 +126,9 @@ export async function buildApp(opts: BuildOptions): Promise<App> {
   const sender = new Sender(evo, blacklist, verification, outbound);
   // Multi-instance: per-agent grants + the cached safe view of fetchInstances
   const instanceAccess = new InstanceAccess(cfg, agents);
-  const instancesService = new InstancesService(evo);
+  const instancesService = new InstancesService(evo, () =>
+    cfg.evo.locked && cfg.evo.instance ? cfg.evo.instance : null,
+  );
   // Cold-contact cap (migration 020): rations FIRST CONTACT only. Recipients
   // this line already has a thread with, and groups, are never counted —
   // capping conversations you are already in would break the day job without

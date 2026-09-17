@@ -82,7 +82,8 @@ export class SettingsStore {
   applyTo(cfg: Config): void {
     const s = this.all();
     if (s.evo_base != null) cfg.evo.base = s.evo_base.replace(/\/+$/, '');
-    if (s.evo_instance != null) cfg.evo.instance = s.evo_instance;
+    // a locked server keeps the env's channel no matter what was saved earlier
+    if (s.evo_instance != null && !cfg.evo.locked) cfg.evo.instance = s.evo_instance;
     if (s.evo_apikey != null) cfg.evo.apikey = s.evo_apikey;
     const min = Number(s.delay_min);
     const max = Number(s.delay_max);

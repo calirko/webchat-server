@@ -97,6 +97,7 @@ Everything is environment variables — see [.env.example](.env.example). Highli
 | Variable | Default | Purpose |
 | --- | --- | --- |
 | `EVOLUTION_BASE` / `EVOLUTION_INSTANCE` / `EVOLUTION_APIKEY` | — | Evolution API connection (server-side only) |
+| `EVOLUTION_LOCK_INSTANCE` | `true` | Cap the server to `EVOLUTION_INSTANCE`: other channels are never listed, called or relayed, and the switcher is hidden. `false` = multi-channel mode. |
 | `API_TOKEN` | *(empty)* | When set, `/api/*` requires it (`X-Api-Token`, `Bearer`, or `?token=` for SSE). Leave empty behind an authenticating proxy. |
 | `EVENTS_ENABLED` | `true` | Relay Evolution websocket events via `GET /api/events` (SSE) |
 | `TZ` | `Asia/Jerusalem` (compose) | Zone for every clock time the server acts on — quiet hours, a campaign's sending window. Unset in a container = UTC |

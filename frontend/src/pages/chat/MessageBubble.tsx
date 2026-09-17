@@ -329,7 +329,7 @@ export default function MessageBubble({
       const p = Math.min(1, d.dx / SWIPE_REPLY_PX);
       icon.style.opacity = String(p);
       icon.style.transform = `translateX(${(d.dx - 40) * swipeDir}px) scale(${0.5 + 0.5 * p})`;
-      icon.style.color = d.dx >= SWIPE_REPLY_PX ? '#25D366' : '#9ca3af';
+      icon.style.color = d.dx >= SWIPE_REPLY_PX ? '#525252' : '#a3a3a3';
     }
   }
 

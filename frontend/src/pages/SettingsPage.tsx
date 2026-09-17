@@ -857,13 +857,22 @@ export default function SettingsPage() {
             value={instance}
             onChange={(e) => setInstance(e.target.value)}
             placeholder="my-instance"
-            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm"
+            readOnly={settings.data?.instanceLocked}
+            className="w-full rounded-md border border-gray-300 px-3 py-2 text-sm read-only:bg-gray-50 read-only:text-gray-500"
           />
-          <InstanceChips current={instance} onPick={setInstance} />
-          <p className="mt-1 text-xs text-gray-500">
-            The channel everyone works on unless an agent is granted others (roster → perms) or
-            switches channels in the header.
-          </p>
+          {settings.data?.instanceLocked ? (
+            <p className="mt-1 text-xs text-gray-500">
+              Locked by <code>EVOLUTION_LOCK_INSTANCE</code> — the server never touches other channels.
+            </p>
+          ) : (
+            <>
+              <InstanceChips current={instance} onPick={setInstance} />
+              <p className="mt-1 text-xs text-gray-500">
+                The channel everyone works on unless an agent is granted others (roster → perms) or
+                switches channels in the header.
+              </p>
+            </>
+          )}
         </div>
         <div>
           <label className="mb-1 block text-sm font-medium text-gray-700">API key</label>

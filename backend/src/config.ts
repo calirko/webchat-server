@@ -4,6 +4,13 @@ export interface EvolutionConfig {
   base: string;
   instance: string;
   apikey: string;
+  /**
+   * Cap the whole server to `instance`: Evolution calls that target any other
+   * instance are refused before they leave the process, other instances'
+   * websocket events are dropped, and the channel can't be changed or added
+   * from the UI. EVOLUTION_LOCK_INSTANCE=false restores multi-channel mode.
+   */
+  locked: boolean;
 }
 
 export interface Config {
@@ -203,6 +210,7 @@ export function loadConfig(env: Env = process.env): Config {
       base: (env.EVOLUTION_BASE || '').replace(/\/+$/, ''),
       instance: env.EVOLUTION_INSTANCE || '',
       apikey: env.EVOLUTION_APIKEY || '',
+      locked: env.EVOLUTION_LOCK_INSTANCE !== 'false',
     },
   };
 }

@@ -29,6 +29,7 @@ export class InstanceAccess {
 
   /** Instance names this agent may use; null = unrestricted. */
   allowedFor(agent: Agent | null): string[] | null {
+    if (this.cfg.evo.locked && this.cfg.evo.instance) return [this.cfg.evo.instance];
     if (!agent || agent.role === 'admin') return null;
     const grants = (agent.instances ?? []).map((n) => n.trim()).filter(Boolean);
     if (grants.length) return grants;
@@ -37,6 +38,8 @@ export class InstanceAccess {
 
   /** null = unrestricted (toggle off, no Access identity, admin, unknown). */
   allowedForRequest(req: FastifyRequest): string[] | null {
+    // the lock applies to everyone — admins, automation and identity-less LAN too
+    if (this.cfg.evo.locked && this.cfg.evo.instance) return [this.cfg.evo.instance];
     if (!this.cfg.agentsEnabled) return null;
     const email = emailFromRequest(req);
     if (!email) return null;
@@ -95,16 +98,25 @@ const TTL_MS = 15_000;
 export class InstancesService {
   private cache: { at: number; list?: InstanceSummary[]; error?: string } | null = null;
 
-  constructor(private readonly evo: EvolutionApi) {}
+  constructor(
+    private readonly evo: EvolutionApi,
+    /** The instance the server is capped to, or null when unlocked. */
+    private readonly lockedTo: () => string | null = () => null,
+  ) {}
 
   async list(): Promise<InstanceSummary[]> {
     if (this.cache && Date.now() - this.cache.at < TTL_MS) {
       if (this.cache.list) return this.cache.list;
       throw new Error(this.cache.error ?? 'fetchInstances failed');
     }
+    const only = this.lockedTo();
     let r;
     try {
-      r = await this.evo.call('/instance/fetchInstances', undefined, 'GET');
+      r = await this.evo.call(
+        only ? `/instance/fetchInstances?instanceName=${encodeURIComponent(only)}` : '/instance/fetchInstances',
+        undefined,
+        'GET',
+      );
     } catch (e) {
       const error = String((e as Error).message ?? e);
       this.cache = { at: Date.now(), error };
@@ -137,7 +149,7 @@ export class InstancesService {
           : undefined,
         disconnectedAt: i?.disconnectionAt ? String(i.disconnectionAt) : null,
       }))
-      .filter((i) => i.name);
+      .filter((i) => i.name && (!only || i.name === only));
     this.cache = { at: Date.now(), list };
     return list;
   }

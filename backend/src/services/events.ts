@@ -18,7 +18,13 @@ export class EventRelay {
   private readonly listeners = new Set<Listener>();
 
   constructor(
-    private readonly cfg: { base: string; instance: string; apikey: string; enabled: boolean },
+    private readonly cfg: {
+      base: string;
+      instance: string;
+      apikey: string;
+      enabled: boolean;
+      locked?: boolean;
+    },
     private readonly log: Logger = (m) => console.log(new Date().toISOString(), m),
   ) {}
 
@@ -39,6 +45,7 @@ export class EventRelay {
     });
     this.socket.onAny((event: string, ...args: unknown[]) => {
       const data = (args[0] ?? null) as { instance?: string } | null;
+      if (!this.accepts(data)) return;
       // global mode carries every instance's events. All of them are relayed —
       // the SSE route filters per connection by the agent's instance grants,
       // and backend listeners are instance-aware via the envelope tag.
@@ -48,6 +55,12 @@ export class EventRelay {
     this.socket.on('connect_error', (e: Error) =>
       this.log(`[events] Evolution websocket unavailable (${e.message}) — retrying`),
     );
+  }
+
+  /** Locked to one channel: other instances' traffic never enters the app. */
+  accepts(data: { instance?: unknown } | null): boolean {
+    if (!this.cfg.locked || !this.cfg.instance) return true;
+    return typeof data?.instance !== 'string' || data.instance === this.cfg.instance;
   }
 
   stop(): void {
@@ -66,7 +79,7 @@ export class EventRelay {
    * the Settings UI on a server that booted unconfigured. start() still
    * no-ops when disabled or base is empty.
    */
-  reconfigure(evo: { base: string; instance: string; apikey: string }): void {
+  reconfigure(evo: { base: string; instance: string; apikey: string; locked?: boolean }): void {
     this.stop();
     Object.assign(this.cfg, evo);
     this.start();
