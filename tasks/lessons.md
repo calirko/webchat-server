@@ -9,9 +9,6 @@
   (port 8080) talks to the real WhatsApp account and restarts on file edits —
   stop it first; verify against `backend-sandbox` (8090) instead, and delete
   `data/sandbox-verify.db` afterwards.
-- **Scheduler tests hook `jobs.allSends`** — runJob calls it once at the start
-  (progress seeding) and once at finalize; mocks that simulate finalize-gap
-  races must skip the first call.
 - **PS5.1 mangles embedded double quotes in `git commit -m @'…'@`** — the
   here-string survives PowerShell but the native-arg pass to git splits on the
   inner quotes. Write the message to a file and `git commit -F` it.

@@ -1,4 +1,4 @@
-// Stand-in Evolution API for verifying the campaign rig locally.
+// Stand-in Evolution API for exercising the send path locally.
 // Accepts every /message/send* with a plausible key.id, and answers the few
 // read endpoints the app calls at boot. Nothing leaves this machine.
 import { createServer } from 'node:http';

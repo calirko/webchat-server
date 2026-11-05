@@ -4,21 +4,19 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## What this is
 
-A self-hosted WhatsApp manager built on the [Evolution API](https://doc.evolution-api.com/):
-shared team inbox, bulk/scheduled sending with a resumable per-recipient send ledger, and
-anti-ban guardrails (blacklist, opt-out, cold-contact pacing, number verification). The
-defining architectural decision: **the frontend talks only to `/api`** — the Evolution base
+A self-hosted shared WhatsApp inbox built on the [Evolution API](https://doc.evolution-api.com/):
+real-time team chat with assignment/status/tags/notes/reminders, groups, and notifications
+(in-page chime + system notifications + Web Push). Bulk/scheduled sending, the AI agent,
+quick replies and Insights were removed in v3.0 — their DB tables still exist (migrations are
+append-only) but nothing reads or writes them. The defining architectural decision: **the frontend talks only to `/api`** — the Evolution base
 URL and API key exist exclusively on the server (`backend/src/services/evolution.ts` and the
 route layer), never in the browser.
 
 Monorepo, npm workspaces: `backend/` (Node + Fastify + better-sqlite3) and `frontend/`
-(React 19 + Vite + TypeScript + Tailwind + react-query, no router-driven navigation — tab
-state instead).
+(React 19 + Vite + TypeScript + Tailwind + react-query + react-router).
 
 Read [README.md](README.md) for the feature list and API surface, [ARCHITECTURE.md](ARCHITECTURE.md)
-for the full backend design and current shipped-version status, [ANTI-BAN.md](ANTI-BAN.md) for
-why every pacing/cap/delay knob exists (read this before touching anything in the send path),
-[DEV.md](DEV.md) for the local dev/test rig, and [deploy/README.md](deploy/README.md) for the
+for the full design (including the live-inbox event path), [DEV.md](DEV.md) for the local dev/test rig, and [deploy/README.md](deploy/README.md) for the
 production deploy procedure.
 
 ## Commands
@@ -45,9 +43,9 @@ Per-workspace (needed for single-test runs — vitest has no root-level passthro
 
 ```bash
 npm -w backend test                          # backend/test/*.test.ts, faked Evolution
-npx vitest run backend/test/scheduler.test.ts        # one backend file
-npx vitest run -t "pause mid-batch"                  # by test name, any workspace
-npm -w frontend test                         # frontend/test/*.test.ts — pure chat-model functions
+npx vitest run backend/test/chatunread.test.ts       # one backend file
+npx vitest run -t "ingestUpsert"                     # by test name, any workspace
+npm -w frontend test                         # frontend/test/*.test.ts — chat model + live inbox
 npm -w backend run typecheck
 npm -w frontend run typecheck
 ```
@@ -77,51 +75,36 @@ call.
 Concepts that span multiple files — read `ARCHITECTURE.md` for the full detail, this is just
 the map:
 
-- **Send ledger** (`job_sends` table, `services/scheduler.ts`, `services/jobs.ts`): every
-  recipient × item of a job is one row (`sent`/`skipped`/`failed`). Crash-safe and resumable —
-  a restart flips interrupted jobs back to pending and re-run never resends a row already
-  marked sent. Compose "Send now" and Groups broadcast create a job too
-  (`type: 'immediate'`) so a closed browser tab can't lose a send.
-- **Campaign pause/resume/batching** (`jobs.batch` JSON column, `scheduler.ts`): a sending
-  window (`pauseAt`/`resumeAt`) and/or batch pacing (`size` + `pauseMin`), both leaving the job
-  `running` without finalizing — the same resume path crash recovery uses. A paused job can be
-  edited (same item count only; ledger rows key on item index). The within-batch wire-attempt
-  count lives in `jobs.batch_sent`, written through on every send so it survives a restart mid-batch
-  (see ANTI-BAN.md §2) — an operator can also force it back to 0 via `POST /api/jobs/:id/reset-batch`.
-- **Blacklist**: enforced at one choke point, `services/sender.ts` (`Sender.sendOne`) —
-  identical phone normalization on both sides. Groups are never blocked.
-- **Number verification** (`services/verification.ts`): a *cache*, separate table from the
-  blacklist on purpose (policy vs. an expiring observation). Runs as a background drip, never
-  gates a campaign's first send. Has its own throttle breaker — see ANTI-BAN.md.
-- **Cold-contact cap** (`services/quota.ts` + `services/familiarity.ts`): rations first-contact
-  volume only, per rolling 24h, ramping from `COLD_WARMUP_START` to `COLD_DAILY_CAP`. Only an
-  *inbound* message (or the one-time boot seed from Evolution's existing chat list) makes a
-  contact "known" — outbound sends never do, or the cap would launder itself.
+- **Send path**: `POST /api/send` → `services/sender.ts` (thin typed wrapper over Evolution's
+  `/message/send*`). Chat replies, media and voice notes all go through it.
 - **Event envelope** (`services/envelope.ts#unwrapEvent`): Evolution's global websocket wraps
-  every payload as `{instance, data}`. **Every** backend listener (acks, opt-out, chat watcher,
-  message stats, aiagent) must go through `unwrapEvent` — a listener that pattern-matches
+  every payload as `{instance, data}`. **Every** listener (backend: chat watcher, unread,
+  message cache, read receipts, push; frontend: `useEvents.ts#ingestUpsert`) must go through
+  the envelope unwrap — a listener that pattern-matches
   fields directly on the raw event silently no-ops in production while passing tests fed bare
   records. This has shipped broken more than once (see `tasks/lessons.md`). New listeners need
   an envelope-shaped test.
 - **EventRelay / SSE**: one upstream socket.io connection to Evolution
   (`services/events.ts`), fanned out to browsers over `GET /api/events` (SSE, one-way).
+  `/api/health` reports whether that upstream is connected (`events` field).
+- **Live inbox (frontend)**: `useLiveInbox` is mounted once in `App` (not in a page — it must
+  run on every tab). `ingestUpsert` writes each message straight into cached threads + the chat
+  list, then a debounced refetch reconciles. `lib/attention.ts` (open chat + focus) decides
+  silent / chime (`lib/sound.ts`) / chime + system notification (`lib/notify.ts`).
+- **Housekeeping** (`services/housekeeping.ts`): fires due reminders and the daily retention
+  sweep.
 - **Roles/authz** (`services/authz.ts`): permission keys checked via `can(agent, key)`;
   routes name a `PermissionKey`. Enforcement is skipped when identification is off or a
   request carries no Cloudflare Access identity (LAN/bearer/automation). First agent ever seen
   becomes admin.
 - **Multi-instance**: one Evolution server can host several WhatsApp lines
   (`services/instances.ts`); every Evolution-touching route resolves `?instance=` through
-  `InstanceAccess`, enforced against `agents.instances` grants for non-admins. Jobs are pinned
-  to their instance.
-- **AI agent** (`services/aiagent.ts`, `services/aiProviders.ts`, `services/aiLimits.ts`,
-  `services/knowledge.ts`, `routes/aiagent.ts`): an addition on top of the design in
-  ARCHITECTURE.md — check these files directly rather than assuming ARCHITECTURE.md's version
-  history is exhaustive, it lags real `package.json` version (currently 2.52.x).
+  `InstanceAccess`, enforced against `agents.instances` grants for non-admins.
 
 ## Frontend (`frontend/src/`)
 
-`pages/*.tsx` are the tab-driven top-level views (`lib/tabs.ts` controls nav — there is no
-router-based routing despite `react-router-dom` being a dependency). `lib/api.ts` is the only
+`pages/*.tsx` are the top-level views (Chat, Groups, Profile, Preferences, Settings), routed
+with react-router; `lib/tabs.ts` lists them. `lib/api.ts` is the only
 place that calls `/api`. `lib/chatModel.ts` and friends contain the pure, independently-tested
 chat logic (timestamp coercion, `@lid` dedup/aliasing) — keep new chat-shape logic there so it
 stays covered by `frontend/test/`. Evolution record shapes (`EvoChat`, `EvoMessage`) are loosely
@@ -131,9 +114,8 @@ across versions.
 ## Local dev/test rig gotchas (see DEV.md for full detail)
 
 - `dev:local:api`/`dev:local:web` point at **prod Evolution** (same live WhatsApp line) — reads
-  are safe, but any send (compose, chat reply, scheduled job) reaches a real number.
-  Automation (recurring/opt-out) is forced off in `.env.dev`.
-- To exercise pause/resume/batching without messaging anyone, use the mock Evolution
+  are safe, but any send (chat reply, media, voice note) reaches a real number.
+- To exercise sends without messaging anyone, use the mock Evolution
   (`node scripts/mock-evolution.mjs`, `:9099`) with the `backend-sandbox-mockevo` launch config
   (`:8090`, `data/sandbox-verify.db`) — delete that sandbox DB when done.
 - Stop the `backend` preview (port 8080, real Evolution) before editing backend code, since it
@@ -145,8 +127,6 @@ across versions.
   that breaks tsx's package.json parsing. Use the Edit tool or a BOM-less `WriteAllText`.
 - `git commit -m @'…'@` here-strings with embedded double quotes get mangled by PS5.1's
   native-arg passing to git — write the message to a file and `git commit -F` it instead.
-- Scheduler tests hook `jobs.allSends`; `runJob` calls it once at progress-seeding and once at
-  finalize — mocks simulating a finalize-gap race must skip the first call.
 
 ## Deploy
 

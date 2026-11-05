@@ -11,8 +11,7 @@ Cloudflare Access.
 The host has no GitHub credentials, so deploys ship an archive rather than a
 `git pull`:
 
-1. **Pre-flight:** CI green; `GET /api/jobs?scope=scheduled` shows 0
-   pending/running jobs (or note them — the scheduler fires due jobs on boot).
+1. **Pre-flight:** CI green.
 2. `git archive` the merge commit → `pscp` to `/tmp` on the host → extract
    over `~/webchat-v2` (untracked `.env` and `data/` survive).
 3. **Mandatory:** `cp deploy/docker-compose.prod.yml docker-compose.yml`.
@@ -21,7 +20,7 @@ The host has no GitHub credentials, so deploys ship an archive rather than a
    `webchat` name, breaking the tunnel route. Skipping this caused a
    ~2-minute outage on 2026-06-12.
 4. `docker compose up -d --build`.
-5. **Smoke:** `GET /api/health` shows the new version; chat count sane
+5. **Smoke:** `GET /api/health` shows the new version and `"events":"connected"`; chat count sane
    (~1335); `docker logs webchat` shows `[events] connected to Evolution
    websocket`; public hostname still 302s to Cloudflare Access; tunnel
    traffic returns 200s.
@@ -52,19 +51,13 @@ is why they've stayed open.
 
 - **Phone QA of send paths** — run locally against production Evolution and
   verify against a test contact:
-  - Compose: text; 2+ item sequence in order; image with caption; voice file.
   - Chat: text reply; reply-with-quote; voice-note recording; edit own
     message; reaction; delete-for-everyone.
-  - Blacklisted number → send skipped.
-  - Scheduled job (2 min out) fires; kill/restart mid-job → resumes without
-    resending.
-  - Groups: broadcast to a test group; one management action.
-  - Tools: location; contact card. Profile: change status text and revert.
-- **Real-traffic QA** of the v2.4 listeners: delivery acks (✓✓ ticks) and
-  auto opt-out against live incoming messages. v2.9.0 fixed the envelope bug
-  that kept these dead — confirm with the first live traffic that
-  `/api/analytics/summary` delivered/read climb and the Insights activity
-  chart ticks.
+  - Notifications: with the tab in the background, an incoming message
+    chimes and shows a system notification; with that chat open and focused,
+    nothing; on another tab of the app, a chime.
+  - Groups: one management action (rename, add/remove participant).
+  - Profile: change status text and revert.
 - **v2.11 edit/delete browser QA** — logic is unit-tested against captured
   prod payloads but not yet eyeballed live:
   - Arrive-then-delete shows the original under the tombstone (cache hit).
@@ -76,10 +69,6 @@ is why they've stayed open.
     reload.
   - Caveat: only messages seen *after* the 2.11 deploy are cached; older
     deletes/edits fall back to tombstone-only / no history.
-- **v2.12 cross-instance QA** — create a scheduled job + quick reply on line A,
-  switch the header to line B; confirm Schedule / History / job ghost-bubbles /
-  Quick Replies / Insights show only B's data and A's reappear on switching
-  back; legacy blank-instance rows show under the default line only.
 - **Credential rotation** — rotate anything that lived in v1 artifacts.
   ⚠️ Rotating the Evolution master key must account for n8n, whose
   workflows may hold the same key.
