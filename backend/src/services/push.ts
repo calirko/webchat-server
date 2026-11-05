@@ -3,10 +3,9 @@ import type { Db } from '../db/index.js';
 import type { ChatMetaStore } from './chatmeta.js';
 import { unwrapEvent } from './envelope.js';
 import type { EventRelay } from './events.js';
-import { messageTimeMs } from './msgstats.js';
+import { messageTimeMs } from './time.js';
 import {
   DEFAULT_NOTIFY_PREFS,
-  shouldNotifyJob,
   shouldNotifyMessage,
   type NotifyPrefs,
 } from './notifyprefs.js';
@@ -26,7 +25,7 @@ export interface PushPayload {
   body: string;
   /** collapse-tag + click-target chat (the canonical jid) */
   tag: string;
-  /** deep-link the click opens: `/?chat=<jid>&msg=<id>` or `/?job=<id>` */
+  /** deep-link the click opens: `/?chat=<jid>&msg=<id>`  */
   url?: string;
 }
 
@@ -282,55 +281,6 @@ export function attachPushNotifier(
       } catch (err) {
         log(`[push] notifier error: ${String(err)}`);
       }
-    }
-  });
-}
-
-/** Minimal view of a finished job's progress event (scheduler JOB_PROGRESS). */
-interface JobDoneEvent {
-  jobId?: string;
-  done?: boolean;
-  total?: number;
-  sent?: number;
-  skipped?: number;
-  failed?: number;
-  status?: string;
-}
-
-/**
- * Relay listener: when a scheduled/bulk job finishes (JOB_PROGRESS done), push
- * a summary to the agent who created it (job.sentBy) — or everyone when it has
- * no owner (created while identification was off). Each device is gated by its
- * owner's job prefs (jobsEnded / failures-only / quiet hours). The scheduler
- * emits many done:false progress events per job; only done:true acts here.
- */
-export function attachJobNotifier(
-  relay: EventRelay,
-  push: PushService,
-  jobs: { byId(id: string): { sentBy: string | null } | null },
-  prefs: PrefsSource,
-  log: (msg: string) => void = () => {},
-): void {
-  relay.subscribe((e) => {
-    if (e.event !== 'JOB_PROGRESS') return;
-    const d = e.data as JobDoneEvent | null;
-    if (!d || !d.done || !d.jobId) return;
-    try {
-      const target = jobs.byId(d.jobId)?.sentBy || null; // null = everyone
-      const failed = Number(d.failed ?? 0);
-      const sent = Number(d.sent ?? 0);
-      const total = Number(d.total ?? 0);
-      const skipped = Number(d.skipped ?? 0);
-      const verb = d.status === 'failed' ? 'failed' : d.status === 'cancelled' ? 'cancelled' : 'finished';
-      let body = `${sent}/${total} sent`;
-      if (skipped) body += `, ${skipped} skipped`;
-      if (failed) body += `, ${failed} failed`;
-      const allow = (email: string) => shouldNotifyJob(prefs.get(email), { failed });
-      // click opens History focused on this job (see frontend App deep-link)
-      const url = `/?job=${encodeURIComponent(d.jobId)}`;
-      void push.send(target, { title: `Job ${verb}`, body, tag: `job:${d.jobId}`, url }, { allow });
-    } catch (err) {
-      log(`[push] job notifier error: ${String(err)}`);
     }
   });
 }

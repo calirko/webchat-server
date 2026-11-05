@@ -92,7 +92,8 @@ export function registerAgents(
     if (role === 'agent' && agents.byEmail(email)?.role === 'admin' && agents.adminCount() === 1)
       return reply.code(409).send({ error: 'cannot demote the last admin' });
 
-    // Permission overrides: only known keys, only booleans, and only stored
+    // Permission overrides: only known keys (stale keys from removed features
+    // are dropped silently), only booleans, and only stored
     // when they differ from the (target) role's default — the JSON stays a
     // diff, so changing a role later changes the unset keys with it.
     let perms: PermOverrides | undefined;
@@ -102,8 +103,7 @@ export function registerAgents(
       const targetRole = role ?? agents.byEmail(email)?.role ?? 'agent';
       perms = {};
       for (const [key, value] of Object.entries(b.perms)) {
-        if (!PERMISSION_KEYS.includes(key as PermissionKey))
-          return reply.code(400).send({ error: `unknown permission: ${key}` });
+        if (!PERMISSION_KEYS.includes(key as PermissionKey)) continue;
         if (typeof value !== 'boolean')
           return reply.code(400).send({ error: `perms.${key} must be a boolean` });
         if (value !== roleDefault(targetRole, key as PermissionKey)) perms[key] = value;

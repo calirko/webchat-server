@@ -1,10 +1,4 @@
-import {
-  AI_MODEL_TIERS,
-  AI_PROVIDERS,
-  type AiModelTier,
-  type AiProviderName,
-  type Config,
-} from '../config.js';
+import type { Config } from '../config.js';
 import type { Db } from '../db/index.js';
 
 /** Keys persisted in the settings table. */
@@ -12,44 +6,9 @@ export type SettingKey =
   | 'evo_base'
   | 'evo_instance'
   | 'evo_apikey'
-  | 'delay_min'
-  | 'delay_max'
-  | 'recurring_enabled'
-  | 'quiet_enabled'
-  | 'quiet_start'
-  | 'quiet_end'
-  | 'optout_enabled'
-  | 'optout_keywords'
-  | 'optout_reply'
   | 'agents_enabled'
-  | 'approval_threshold'
   | 'retention_days'
-  | 'notify_instances'
-  | 'verify_enabled'
-  | 'verify_valid_days'
-  | 'verify_invalid_days'
-  | 'verify_daily_cap'
-  | 'verify_batch_size'
-  | 'verify_batch_pause_ms'
-  | 'verify_breaker_run'
-  | 'cold_cap_enabled'
-  | 'cold_daily_cap'
-  | 'cold_warmup_start'
-  | 'cold_ramp_window_days'
-  | 'ai_agent_enabled'
-  | 'ai_agent_instances'
-  | 'ai_agent_provider'
-  | 'ai_agent_model_tier'
-  | 'ai_agent_model'
-  | 'ai_agent_apikey'
-  | 'ai_agent_persona'
-  | 'ai_agent_rules'
-  | 'ai_agent_escalation'
-  | 'ai_agent_max_replies'
-  | 'ai_agent_session_gap_hours'
-  | 'ai_agent_daily_cap'
-  | 'ai_agent_handoff_message'
-  | 'ai_agent_reply_delay_sec';
+  | 'notify_instances';
 
 /**
  * Operator settings stored in SQLite. Saved values override env config —
@@ -85,93 +44,14 @@ export class SettingsStore {
     // a locked server keeps the env's channel no matter what was saved earlier
     if (s.evo_instance != null && !cfg.evo.locked) cfg.evo.instance = s.evo_instance;
     if (s.evo_apikey != null) cfg.evo.apikey = s.evo_apikey;
-    const min = Number(s.delay_min);
-    const max = Number(s.delay_max);
-    if (s.delay_min != null && Number.isFinite(min)) cfg.delayMinMs = min * 1000;
-    if (s.delay_max != null && Number.isFinite(max)) cfg.delayMaxMs = max * 1000;
-    if (s.recurring_enabled != null) cfg.recurringEnabled = s.recurring_enabled === '1';
-    if (s.quiet_enabled != null) cfg.quietEnabled = s.quiet_enabled === '1';
-    if (s.quiet_start != null) cfg.quietStart = s.quiet_start;
-    if (s.quiet_end != null) cfg.quietEnd = s.quiet_end;
-    if (s.optout_enabled != null) cfg.optoutEnabled = s.optout_enabled === '1';
-    if (s.optout_keywords != null) cfg.optoutKeywords = s.optout_keywords;
-    if (s.optout_reply != null) cfg.optoutReply = s.optout_reply;
     if (s.agents_enabled != null) cfg.agentsEnabled = s.agents_enabled === '1';
-    const threshold = Number(s.approval_threshold);
-    if (s.approval_threshold != null && Number.isInteger(threshold) && threshold >= 1)
-      cfg.approvalThreshold = threshold;
     const retention = Number(s.retention_days);
     if (s.retention_days != null && Number.isInteger(retention) && retention >= 0)
       cfg.retentionDays = retention;
-    if (s.verify_enabled != null) cfg.verifyEnabled = s.verify_enabled === '1';
-    const validDays = Number(s.verify_valid_days);
-    if (s.verify_valid_days != null && Number.isInteger(validDays) && validDays >= 1)
-      cfg.verifyValidDays = validDays;
-    const invalidDays = Number(s.verify_invalid_days);
-    if (s.verify_invalid_days != null && Number.isInteger(invalidDays) && invalidDays >= 1)
-      cfg.verifyInvalidDays = invalidDays;
-    // The sweep's pacing, clamped exactly as config.ts clamps the env vars —
-    // a saved value must never reach somewhere an env var could not.
-    const dailyCap = Number(s.verify_daily_cap);
-    if (s.verify_daily_cap != null && Number.isInteger(dailyCap) && dailyCap >= 0)
-      cfg.verifyDailyCap = dailyCap;
-    const batchSize = Number(s.verify_batch_size);
-    if (s.verify_batch_size != null && Number.isInteger(batchSize) && batchSize >= 1)
-      cfg.verifyBatchSize = Math.min(200, batchSize);
-    const batchPause = Number(s.verify_batch_pause_ms);
-    if (s.verify_batch_pause_ms != null && Number.isInteger(batchPause) && batchPause >= 0)
-      cfg.verifyBatchPauseMs = batchPause;
-    const breakerRun = Number(s.verify_breaker_run);
-    if (s.verify_breaker_run != null && Number.isInteger(breakerRun) && breakerRun >= 1)
-      cfg.verifyBreakerRun = breakerRun;
-    if (s.cold_cap_enabled != null) cfg.coldCapEnabled = s.cold_cap_enabled === '1';
-    const coldCap = Number(s.cold_daily_cap);
-    if (s.cold_daily_cap != null && Number.isInteger(coldCap) && coldCap >= 1)
-      cfg.coldDailyCap = coldCap;
-    const coldStart = Number(s.cold_warmup_start);
-    if (s.cold_warmup_start != null && Number.isInteger(coldStart) && coldStart >= 1)
-      cfg.coldWarmupStart = coldStart;
-    const coldRampWindow = Number(s.cold_ramp_window_days);
-    if (s.cold_ramp_window_days != null && Number.isInteger(coldRampWindow) && coldRampWindow >= 1)
-      cfg.coldRampWindowDays = coldRampWindow;
     if (s.notify_instances != null)
       cfg.notifyInstances = s.notify_instances
         .split(',')
         .map((n) => n.trim())
         .filter(Boolean);
-    // AI agent. The master switch and the instance allow-list are the two
-    // things that let it speak at all, so both are read exactly like the
-    // toggles above — no implicit defaults, nothing derived.
-    if (s.ai_agent_enabled != null) cfg.aiAgentEnabled = s.ai_agent_enabled === '1';
-    if (s.ai_agent_instances != null)
-      cfg.aiAgentInstances = s.ai_agent_instances
-        .split(',')
-        .map((n) => n.trim())
-        .filter(Boolean);
-    if (s.ai_agent_provider != null && AI_PROVIDERS.includes(s.ai_agent_provider as AiProviderName))
-      cfg.aiAgentProvider = s.ai_agent_provider as AiProviderName;
-    if (
-      s.ai_agent_model_tier != null &&
-      AI_MODEL_TIERS.includes(s.ai_agent_model_tier as AiModelTier)
-    )
-      cfg.aiAgentModelTier = s.ai_agent_model_tier as AiModelTier;
-    if (s.ai_agent_model != null) cfg.aiAgentModel = s.ai_agent_model;
-    if (s.ai_agent_apikey != null) cfg.aiAgentApiKey = s.ai_agent_apikey;
-    if (s.ai_agent_persona != null) cfg.aiAgentPersona = s.ai_agent_persona;
-    if (s.ai_agent_rules != null) cfg.aiAgentRules = s.ai_agent_rules;
-    if (s.ai_agent_escalation != null) cfg.aiAgentEscalation = s.ai_agent_escalation;
-    const maxReplies = Number(s.ai_agent_max_replies);
-    if (s.ai_agent_max_replies != null && Number.isInteger(maxReplies) && maxReplies >= 1)
-      cfg.aiAgentMaxRepliesPerSession = maxReplies;
-    const gapHours = Number(s.ai_agent_session_gap_hours);
-    if (s.ai_agent_session_gap_hours != null && Number.isInteger(gapHours) && gapHours >= 1)
-      cfg.aiAgentSessionGapHours = gapHours;
-    const aiDailyCap = Number(s.ai_agent_daily_cap);
-    if (s.ai_agent_daily_cap != null && Number.isInteger(aiDailyCap) && aiDailyCap >= 0)
-      cfg.aiAgentDailyCap = aiDailyCap;
-    if (s.ai_agent_handoff_message != null) cfg.aiAgentHandoffMessage = s.ai_agent_handoff_message;
-    const replyDelay = Number(s.ai_agent_reply_delay_sec);
-    if (s.ai_agent_reply_delay_sec != null && Number.isInteger(replyDelay) && replyDelay >= 0)
-      cfg.aiAgentReplyDelaySec = replyDelay;
   }
 }

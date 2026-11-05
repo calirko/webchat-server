@@ -1,8 +1,10 @@
+import { unwrapEvent } from './envelope.js';
+import type { EventRelay } from './events.js';
 import type { Db } from '../db/index.js';
 
 /**
  * Server-side record of WHEN the recipient read one of our sent messages.
- * Fed by the ack relay (see acks.ts: MESSAGES_UPDATE → READ/PLAYED) and read by
+ * Fed by attachReadTracker below (MESSAGES_UPDATE → READ/PLAYED) and read by
  * the findMessages proxy to attach a `readAt` onto each record. This is the only
  * place the read time survives: this Evolution build's stored MessageUpdate
  * history carries a status string but no timestamp, so once the live ack is gone
@@ -37,4 +39,31 @@ export class ReadReceiptStore {
     const row = this.q.byId.get(messageId) as { read_at?: string } | undefined;
     return row?.read_at ?? null;
   }
+}
+
+// Evolution emits either string statuses or raw WhatsApp ack numbers.
+const READ_STATUSES = new Set(['READ', 'PLAYED', '4', '5']);
+
+/**
+ * Stamp the read time of any sent message the moment its READ/PLAYED ack
+ * arrives on MESSAGES_UPDATE — the only chance to capture it (the stored
+ * MessageUpdate history has no timestamp).
+ */
+export function attachReadTracker(relay: EventRelay, onRead: (messageId: string) => void): void {
+  relay.subscribe((e) => {
+    if (e.event !== 'MESSAGES_UPDATE' && e.event !== 'messages.update') return;
+    const records = unwrapEvent(e.data).records as Array<{
+      keyId?: string;
+      messageId?: string;
+      key?: { id?: string };
+      status?: unknown;
+      update?: { status?: unknown };
+    }>;
+    for (const r of records) {
+      const id = r.keyId ?? r.key?.id ?? r.messageId;
+      if (typeof id !== 'string' || !id) continue;
+      const status = String(r.status ?? r.update?.status ?? '').toUpperCase();
+      if (READ_STATUSES.has(status)) onRead(id);
+    }
+  });
 }

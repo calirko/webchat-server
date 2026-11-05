@@ -7,40 +7,13 @@ import { emailFromRequest, type Agent, type AgentRole, type AgentsStore } from '
  * (agents.perms). Routes only ever name a PermissionKey; can() is the single
  * decision seam.
  */
-export type PermissionKey =
-  | 'settings.manage'
-  | 'insights.view'
-  | 'insights.viewOwn'
-  | 'agents.manage'
-  | 'jobs.sendWithoutApproval'
-  | 'jobs.approve'
-  | 'jobs.clearHistory'
-  | 'lists.manage';
+export type PermissionKey = 'settings.manage' | 'agents.manage';
 
-export const PERMISSION_KEYS: readonly PermissionKey[] = [
-  'settings.manage',
-  'insights.view',
-  'insights.viewOwn',
-  'agents.manage',
-  'jobs.sendWithoutApproval',
-  'jobs.approve',
-  'jobs.clearHistory',
-  'lists.manage',
-];
+export const PERMISSION_KEYS: readonly PermissionKey[] = ['settings.manage', 'agents.manage'];
 
 const PERMS: Record<PermissionKey, readonly AgentRole[]> = {
   'settings.manage': ['admin'],
-  'insights.view': ['admin'],
-  'insights.viewOwn': ['admin', 'agent'],
   'agents.manage': ['admin'],
-  'jobs.sendWithoutApproval': ['admin'],
-  'jobs.approve': ['admin'],
-  // bulk-deleting finished/cancelled jobs + their ledger is irreversible —
-  // admins only by default.
-  'jobs.clearHistory': ['admin'],
-  // Cross-line list visibility + widening a list's line_scope beyond what
-  // the creator themselves can see (including "every line").
-  'lists.manage': ['admin'],
 };
 
 export function roleDefault(role: AgentRole, key: PermissionKey): boolean {

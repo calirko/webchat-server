@@ -13,25 +13,20 @@ describe('maintenance: report + cleanup + retention', () => {
     t.db.close();
   });
 
-  /** A finished job with one sent ledger row, finished `n` days ago. */
-  const oldDoneJob = (id: string, n: number) => {
-    const job = t.jobs.upsert({
-      id,
-      scheduledAt: daysAgo(n),
-      recipients: [{ id: '972521111111' }],
-      items: [{ type: 'text', data: { text: 'x' } }],
-    });
-    t.jobs.ensureLedger(job);
-    t.jobs.markSendDone(t.jobs.pendingSends(id)[0]!, 'sent', `m-${id}`);
-    t.db.prepare(`UPDATE jobs SET status='done', finished_at=? WHERE id=?`).run(daysAgo(n), id);
-  };
+  /** One agent-attribution row, sent `n` days ago. */
+  const attribution = (id: string, n: number) =>
+    t.db
+      .prepare(`INSERT INTO message_agents (message_id, agent_email, sent_at) VALUES (?, ?, ?)`)
+      .run(id, 'a@x.com', daysAgo(n));
+  const hasAttribution = (id: string) =>
+    !!t.db.prepare(`SELECT 1 FROM message_agents WHERE message_id = ?`).get(id);
 
   it('GET /api/maintenance reports disk, db, table counts and Evolution counts', async () => {
     const res = await t.app.inject({ method: 'GET', url: '/api/maintenance' });
     expect(res.statusCode).toBe(200);
     const body = res.json();
     expect(body.db.sizeBytes).toBeGreaterThan(0);
-    expect(body.tables).toMatchObject({ jobs: 0, job_sends: 0, blacklist: 0 });
+    expect(body.tables).toMatchObject({ message_agents: 0, reminders: 0 });
     expect(body.evolution).toHaveLength(2);
     expect(body.evolution[1]).toMatchObject({
       name: 'Second',
@@ -42,27 +37,9 @@ describe('maintenance: report + cleanup + retention', () => {
     expect(body.retentionDays).toBe(0);
   });
 
-  it('cleanup purges old finished jobs + ledger + attribution, keeps live work', async () => {
-    oldDoneJob('old', 90);
-    oldDoneJob('fresh', 2);
-    // an old but still-scheduled job must survive whatever its age
-    t.jobs.upsert({
-      id: 'queued',
-      scheduledAt: daysAgo(90),
-      recipients: [{ id: '972521111111' }],
-      items: [{ type: 'text', data: { text: 'x' } }],
-    });
-    // user-cancelled long ago (no finished_at!) → purged via scheduled_at
-    t.jobs.upsert({
-      id: 'cancelled-old',
-      scheduledAt: daysAgo(90),
-      status: 'cancelled',
-      recipients: [{ id: '972521111111' }],
-      items: [{ type: 'text', data: { text: 'x' } }],
-    });
-    t.db
-      .prepare(`INSERT INTO message_agents (message_id, agent_email, sent_at) VALUES (?, ?, ?)`)
-      .run('m-ancient', 'a@x.com', daysAgo(90));
+  it('cleanup purges old attribution, keeps recent rows; dry run touches nothing', async () => {
+    attribution('m-ancient', 90);
+    attribution('m-fresh', 2);
 
     const dry = (
       await t.app.inject({
@@ -71,8 +48,8 @@ describe('maintenance: report + cleanup + retention', () => {
         payload: { olderThanDays: 30, dryRun: true },
       })
     ).json();
-    expect(dry).toMatchObject({ dryRun: true, jobs: 2, sends: 1, messageAgents: 1 });
-    expect(t.jobs.byId('old')).not.toBeNull(); // dry run touched nothing
+    expect(dry).toMatchObject({ dryRun: true, messageAgents: 1 });
+    expect(hasAttribution('m-ancient')).toBe(true);
 
     const real = (
       await t.app.inject({
@@ -81,12 +58,9 @@ describe('maintenance: report + cleanup + retention', () => {
         payload: { olderThanDays: 30, vacuum: true },
       })
     ).json();
-    expect(real).toMatchObject({ dryRun: false, jobs: 2, sends: 1, messageAgents: 1, vacuumed: true });
-    expect(t.jobs.byId('old')).toBeNull();
-    expect(t.jobs.byId('cancelled-old')).toBeNull();
-    expect(t.jobs.byId('fresh')).not.toBeNull();
-    expect(t.jobs.byId('queued')).not.toBeNull();
-    expect(t.jobs.allSends('old')).toHaveLength(0); // cascade
+    expect(real).toMatchObject({ dryRun: false, messageAgents: 1, vacuumed: true });
+    expect(hasAttribution('m-ancient')).toBe(false);
+    expect(hasAttribution('m-fresh')).toBe(true);
   });
 
   it('rejects bad cutoffs', async () => {
@@ -100,23 +74,22 @@ describe('maintenance: report + cleanup + retention', () => {
     }
   });
 
-  it('retention sweep runs once per day from the scheduler poll', async () => {
-    oldDoneJob('ancient', 90);
+  it('retention sweep runs once per day from the housekeeping poll', async () => {
+    attribution('ancient', 90);
     t.cfg.retentionDays = 30;
-    await t.scheduler.tick();
-    expect(t.jobs.byId('ancient')).toBeNull();
+    t.housekeeping.tick();
+    expect(hasAttribution('ancient')).toBe(false);
 
-    // same-day second tick must not re-run the sweep (cheap guard check:
-    // re-insert and verify it survives the next tick)
-    oldDoneJob('ancient2', 90);
-    await t.scheduler.tick();
-    expect(t.jobs.byId('ancient2')).not.toBeNull();
+    // same-day second tick must not re-run the sweep
+    attribution('ancient2', 90);
+    t.housekeeping.tick();
+    expect(hasAttribution('ancient2')).toBe(true);
   });
 
   it('retention 0 (default) never purges', async () => {
-    oldDoneJob('ancient', 400);
-    await t.scheduler.tick();
-    expect(t.jobs.byId('ancient')).not.toBeNull();
+    attribution('ancient', 400);
+    t.housekeeping.tick();
+    expect(hasAttribution('ancient')).toBe(true);
   });
 
   it('settings round-trip: retentionDays', async () => {

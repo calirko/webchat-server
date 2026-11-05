@@ -21,43 +21,6 @@ describe('/api/send', () => {
     expect(t.evo.calls[0]?.endpoint).toBe('/message/sendText/Test');
   });
 
-  it('skips blacklisted recipients', async () => {
-    t.blacklist.addMany([{ phone_number: '972521111111' }]);
-    const res = await t.app.inject({
-      method: 'POST',
-      url: '/api/send',
-      payload: { recipient: '972521111111', item: { type: 'text', data: { text: 'hi' } } },
-    });
-    expect(res.json()).toMatchObject({ ok: true, routed: 'skipped', skipped: true });
-    expect(t.evo.calls).toHaveLength(0);
-  });
-
-  it('cannot bypass the blacklist by claiming the recipient is a group', async () => {
-    t.blacklist.addMany([{ phone_number: '972521111111' }]);
-    const res = await t.app.inject({
-      method: 'POST',
-      url: '/api/send',
-      payload: {
-        recipient: '972521111111',
-        item: { type: 'text', data: { text: 'hi' } },
-        isGroup: true, // client-controlled — must not disable enforcement
-      },
-    });
-    expect(res.json()).toMatchObject({ ok: true, routed: 'skipped', skipped: true });
-    expect(t.evo.calls).toHaveLength(0);
-  });
-
-  it('still sends to real group JIDs regardless of the blacklist', async () => {
-    t.blacklist.addMany([{ phone_number: '972521111111' }]);
-    const res = await t.app.inject({
-      method: 'POST',
-      url: '/api/send',
-      payload: { recipient: '123-456@g.us', item: { type: 'text', data: { text: 'hi' } } },
-    });
-    expect(res.json()).toMatchObject({ ok: true, routed: 'evo' });
-    expect(t.evo.calls).toHaveLength(1);
-  });
-
   it('returns 502 when Evolution fails', async () => {
     t.evo.failuresLeft.set('972521111111', 99);
     const res = await t.app.inject({
@@ -410,19 +373,19 @@ describe('API token auth', () => {
   });
 
   it('rejects API calls without the token', async () => {
-    expect((await t.app.inject({ method: 'GET', url: '/api/jobs' })).statusCode).toBe(401);
+    expect((await t.app.inject({ method: 'GET', url: '/api/chat-meta' })).statusCode).toBe(401);
   });
 
   it('accepts x-api-token and bearer forms', async () => {
     for (const headers of [{ 'x-api-token': 'secret' }, { authorization: 'Bearer secret' }]) {
-      const res = await t.app.inject({ method: 'GET', url: '/api/jobs', headers });
+      const res = await t.app.inject({ method: 'GET', url: '/api/chat-meta', headers });
       expect(res.statusCode).toBe(200);
     }
   });
 
   it('accepts ?token= only on /api/events (EventSource cannot set headers)', async () => {
     // query tokens leak into access logs, so every other route rejects them
-    const viaQuery = await t.app.inject({ method: 'GET', url: '/api/jobs?token=secret' });
+    const viaQuery = await t.app.inject({ method: 'GET', url: '/api/chat-meta?token=secret' });
     expect(viaQuery.statusCode).toBe(401);
 
     // the SSE stream never ends, so probe it over a real socket

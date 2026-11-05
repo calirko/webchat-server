@@ -4,15 +4,6 @@ import { makeApp, type TestApp } from './helpers.js';
 
 const ADMIN = { 'cf-access-authenticated-user-email': 'boss@gmail.com' };
 const AGENT = { 'cf-access-authenticated-user-email': 'dana@gmail.com' };
-const textItem = { type: 'text', data: { text: 'hi' } };
-
-async function waitFor(cond: () => boolean, ms = 3000): Promise<void> {
-  const t0 = Date.now();
-  while (!cond()) {
-    if (Date.now() - t0 > ms) throw new Error('waitFor timed out');
-    await new Promise((res) => setTimeout(res, 20));
-  }
-}
 
 describe('v2.8 agent workbench', () => {
   let t: TestApp;
@@ -31,27 +22,12 @@ describe('v2.8 agent workbench', () => {
     await t.app.inject({ method: 'GET', url: '/api/me', headers: AGENT });
   };
 
-  const createJob = (headers: Record<string, string>, recipients: Array<{ id: string }>, extra: Record<string, unknown> = {}) =>
-    t.app.inject({
-      method: 'POST',
-      url: '/api/jobs',
-      headers,
-      payload: {
-        scheduledAt: new Date(Date.now() + 3_600_000).toISOString(),
-        recipients,
-        items: [textItem],
-        ...extra,
-      },
-    });
-
   describe('per-agent permission overrides', () => {
-    it('role defaults: admin has approval powers, agent does not', async () => {
+    it('role defaults: admin manages settings and agents, agent does not', async () => {
       await enableWithTwoAgents();
       const me = (await t.app.inject({ method: 'GET', url: '/api/me', headers: AGENT })).json();
       expect(me.role).toBe('agent');
-      expect(me.perms['jobs.sendWithoutApproval']).toBe(false);
-      expect(me.perms['jobs.approve']).toBe(false);
-      expect(me.perms['insights.viewOwn']).toBe(true);
+      expect(me.perms).toEqual({ 'settings.manage': false, 'agents.manage': false });
     });
 
     it('PUT perms grants an agent a permission; only the diff is stored', async () => {
@@ -61,12 +37,12 @@ describe('v2.8 agent workbench', () => {
           method: 'PUT',
           url: '/api/agents/dana%40gmail.com',
           headers: ADMIN,
-          payload: { perms: { 'jobs.sendWithoutApproval': true, 'insights.viewOwn': true } },
+          payload: { perms: { 'settings.manage': true, 'agents.manage': false } },
         })
       ).json();
-      // viewOwn matches the role default → not stored as an override
-      expect(updated.perms).toEqual({ 'jobs.sendWithoutApproval': true });
-      expect(updated.effectivePerms['jobs.sendWithoutApproval']).toBe(true);
+      // agents.manage=false matches the role default → not stored as an override
+      expect(updated.perms).toEqual({ 'settings.manage': true });
+      expect(updated.effectivePerms['settings.manage']).toBe(true);
     });
 
     it('a deny override can revoke an admin default', async () => {
@@ -75,147 +51,30 @@ describe('v2.8 agent workbench', () => {
         method: 'PUT',
         url: '/api/agents/dana%40gmail.com',
         headers: ADMIN,
-        payload: { role: 'admin', perms: { 'jobs.approve': false } },
+        payload: { role: 'admin', perms: { 'agents.manage': false } },
       });
       const me = (await t.app.inject({ method: 'GET', url: '/api/me', headers: AGENT })).json();
       expect(me.role).toBe('admin');
-      expect(me.perms['jobs.approve']).toBe(false);
+      expect(me.perms['agents.manage']).toBe(false);
     });
 
-    it('rejects unknown permission keys and non-boolean values', async () => {
+    it('drops unknown (e.g. removed-feature) keys, rejects non-boolean values', async () => {
       await enableWithTwoAgents();
+      const stale = await t.app.inject({
+        method: 'PUT',
+        url: '/api/agents/dana%40gmail.com',
+        headers: ADMIN,
+        payload: { perms: { 'jobs.approve': true } },
+      });
+      expect(stale.statusCode).toBe(200);
+      expect(stale.json().perms).toEqual({});
       const bad = await t.app.inject({
         method: 'PUT',
         url: '/api/agents/dana%40gmail.com',
         headers: ADMIN,
-        payload: { perms: { 'jobs.hack': true } },
+        payload: { perms: { 'settings.manage': 'yes' } },
       });
       expect(bad.statusCode).toBe(400);
-    });
-  });
-
-  describe('job approval flow', () => {
-    it('agent bulk job is held; single recipient passes; admin passes', async () => {
-      await enableWithTwoAgents();
-      const held = (await createJob(AGENT, [{ id: '972521111111' }, { id: '972522222222' }])).json();
-      expect(held.status).toBe('pending_approval');
-      const single = (await createJob(AGENT, [{ id: '972521111111' }])).json();
-      expect(single.status).toBe('pending');
-      const admin = (await createJob(ADMIN, [{ id: '972521111111' }, { id: '972522222222' }])).json();
-      expect(admin.status).toBe('pending');
-    });
-
-    it('the bulk threshold is configurable', async () => {
-      await enableWithTwoAgents();
-      await t.app.inject({
-        method: 'PUT', url: '/api/settings', headers: ADMIN, payload: { approvalThreshold: 2 },
-      });
-      const two = (await createJob(AGENT, [{ id: '972521111111' }, { id: '972522222222' }])).json();
-      expect(two.status).toBe('pending');
-      const three = (
-        await createJob(AGENT, [{ id: '972521111111' }, { id: '972522222222' }, { id: '972523333333' }])
-      ).json();
-      expect(three.status).toBe('pending_approval');
-    });
-
-    it('the submitter cannot self-approve by re-saving with status pending', async () => {
-      await enableWithTwoAgents();
-      const held = (await createJob(AGENT, [{ id: '972521111111' }, { id: '972522222222' }])).json();
-      const edited = (
-        await createJob(AGENT, [{ id: '972521111111' }, { id: '972522222222' }], {
-          id: held.id,
-          status: 'pending',
-        })
-      ).json();
-      expect(edited.status).toBe('pending_approval');
-    });
-
-    it('approve releases (bumping an overdue fire time); reject cancels with reason', async () => {
-      await enableWithTwoAgents();
-      const before = Date.now();
-      const held = (
-        await createJob(AGENT, [{ id: '972521111111' }, { id: '972522222222' }], {
-          scheduledAt: new Date(before - 3_600_000).toISOString(),
-        })
-      ).json();
-      expect(held.status).toBe('pending_approval');
-
-      // a plain agent may not approve
-      const forbidden = await t.app.inject({
-        method: 'POST', url: `/api/jobs/${held.id}/approve`, headers: AGENT,
-      });
-      expect(forbidden.statusCode).toBe(403);
-
-      const approved = (
-        await t.app.inject({ method: 'POST', url: `/api/jobs/${held.id}/approve`, headers: ADMIN })
-      ).json();
-      // overdue scheduled_at was bumped so the overdue guard can't mark it missed
-      expect(new Date(approved.scheduledAt).getTime()).toBeGreaterThanOrEqual(before);
-      await waitFor(() => ['running', 'done'].includes(t.jobs.byId(held.id)?.status ?? ''));
-
-      const held2 = (await createJob(AGENT, [{ id: '972521111111' }, { id: '972522222222' }])).json();
-      const rejected = (
-        await t.app.inject({
-          method: 'POST',
-          url: `/api/jobs/${held2.id}/reject`,
-          headers: ADMIN,
-          payload: { reason: 'wrong audience' },
-        })
-      ).json();
-      expect(rejected.status).toBe('cancelled');
-      expect(rejected.result).toContain('rejected by boss@gmail.com: wrong audience');
-    });
-
-    it('restore and rerun re-run the approval rule', async () => {
-      await enableWithTwoAgents();
-      const held = (await createJob(AGENT, [{ id: '972521111111' }, { id: '972522222222' }])).json();
-      await t.app.inject({ method: 'POST', url: `/api/jobs/${held.id}/cancel`, headers: AGENT });
-      const restored = (
-        await t.app.inject({ method: 'POST', url: `/api/jobs/${held.id}/restore`, headers: AGENT })
-      ).json();
-      expect(restored.status).toBe('pending_approval');
-
-      t.jobs.finish(held.id, 'done', 'test');
-      const rerun = (
-        await t.app.inject({ method: 'POST', url: `/api/jobs/${held.id}/rerun`, headers: AGENT })
-      ).json();
-      expect(rerun.status).toBe('pending_approval');
-      const rerunByAdmin = (
-        await t.app.inject({ method: 'POST', url: `/api/jobs/${held.id}/rerun`, headers: ADMIN })
-      ).json();
-      expect(rerunByAdmin.status).toBe('pending');
-    });
-
-    it('held jobs sit in the Scheduled scope and survive clears', async () => {
-      await enableWithTwoAgents();
-      const held = (
-        await createJob(AGENT, [{ id: '972521111111' }, { id: '972522222222' }], { type: 'immediate' })
-      ).json();
-      const scheduled = (
-        await t.app.inject({ method: 'GET', url: '/api/jobs?scope=scheduled' })
-      ).json();
-      expect(scheduled.jobs.map((j: { id: string }) => j.id)).toContain(held.id);
-      const history = (await t.app.inject({ method: 'GET', url: '/api/jobs?scope=history' })).json();
-      expect(history.jobs.map((j: { id: string }) => j.id)).not.toContain(held.id);
-
-      await t.app.inject({ method: 'POST', url: '/api/jobs/clear-done', payload: {} });
-      await t.app.inject({ method: 'POST', url: '/api/jobs/clear-done', payload: { scope: 'history' } });
-      expect(t.jobs.byId(held.id)?.status).toBe('pending_approval');
-    });
-
-    it('while the agents toggle is OFF held jobs fire without a status rewrite', async () => {
-      await enableWithTwoAgents();
-      const held = (
-        await createJob(AGENT, [{ id: '972521111111' }, { id: '972522222222' }], {
-          scheduledAt: new Date(Date.now() - 1000).toISOString(),
-        })
-      ).json();
-      await t.scheduler.tick();
-      expect(t.jobs.byId(held.id)?.status).toBe('pending_approval'); // toggle on → stays held
-
-      await t.app.inject({ method: 'PUT', url: '/api/settings', headers: ADMIN, payload: { agentsEnabled: false } });
-      await t.scheduler.tick();
-      expect(t.jobs.byId(held.id)?.status).toBe('done');
     });
   });
 
@@ -325,63 +184,8 @@ describe('v2.8 agent workbench', () => {
     });
   });
 
-  describe('personal quick replies', () => {
-    it('personal replies are visible to their owner only; shared to everyone', async () => {
-      await enableWithTwoAgents();
-      await t.app.inject({ method: 'POST', url: '/api/quick-replies', headers: AGENT, payload: { shortcut: 'mine', text: 'personal', personal: true } });
-      await t.app.inject({ method: 'POST', url: '/api/quick-replies', headers: AGENT, payload: { shortcut: 'team', text: 'shared' } });
-
-      const mine = (await t.app.inject({ method: 'GET', url: '/api/quick-replies', headers: AGENT })).json();
-      expect(mine.map((r: { shortcut: string }) => r.shortcut).sort()).toEqual(['mine', 'team']);
-      const boss = (await t.app.inject({ method: 'GET', url: '/api/quick-replies', headers: ADMIN })).json();
-      expect(boss.map((r: { shortcut: string }) => r.shortcut)).toEqual(['team']);
-    });
-
-    it('scope=all lets an admin see every instance and every owner; agents stay scoped', async () => {
-      await enableWithTwoAgents();
-      // dana's personal reply on the default line, a shared reply on another line
-      await t.app.inject({ method: 'POST', url: '/api/quick-replies', headers: AGENT, payload: { shortcut: 'mine', text: 'personal', personal: true } });
-      await t.app.inject({ method: 'POST', url: '/api/quick-replies?instance=Second', headers: ADMIN, payload: { shortcut: 'sec', text: 'second line' } });
-
-      const all = (await t.app.inject({ method: 'GET', url: '/api/quick-replies?scope=all', headers: ADMIN })).json();
-      expect(all.map((r: { shortcut: string }) => r.shortcut).sort()).toEqual(['mine', 'sec']);
-
-      // a plain agent asking for scope=all is silently scoped to their own roster
-      const agentAll = (await t.app.inject({ method: 'GET', url: '/api/quick-replies?scope=all', headers: AGENT })).json();
-      expect(agentAll.map((r: { shortcut: string }) => r.shortcut)).toEqual(['mine']);
-    });
-
-    it('only the owner (or an admin) edits a personal reply', async () => {
-      await enableWithTwoAgents();
-      const r = (
-        await t.app.inject({ method: 'POST', url: '/api/quick-replies', headers: AGENT, payload: { text: 'personal', personal: true } })
-      ).json();
-      const otherAgent = { 'cf-access-authenticated-user-email': 'yossi@gmail.com' };
-      await t.app.inject({ method: 'GET', url: '/api/me', headers: otherAgent });
-      expect((await t.app.inject({ method: 'PUT', url: `/api/quick-replies/${r.id}`, headers: otherAgent, payload: { text: 'hijack' } })).statusCode).toBe(403);
-      expect((await t.app.inject({ method: 'PUT', url: `/api/quick-replies/${r.id}`, headers: AGENT, payload: { text: 'mine' } })).statusCode).toBe(200);
-      expect((await t.app.inject({ method: 'DELETE', url: `/api/quick-replies/${r.id}`, headers: ADMIN })).statusCode).toBe(200);
-    });
-  });
-
-  describe('{{agent_name}} personalization', () => {
-    it('substitutes the composing agent display name in job sends', async () => {
-      await enableWithTwoAgents();
-      await t.app.inject({ method: 'PUT', url: '/api/agents/dana%40gmail.com', headers: ADMIN, payload: { name: 'Dana' } });
-      const job = (
-        await createJob(AGENT, [{ id: '972521111111' }], {
-          scheduledAt: new Date(Date.now() - 1000).toISOString(),
-          items: [{ type: 'text', data: { text: 'Hi, {{agent_name|the team}} here' } }],
-        })
-      ).json();
-      await waitFor(() => t.jobs.byId(job.id)?.status === 'done');
-      const sentText = t.evo.calls.find((c) => c.body?.text)?.body.text;
-      expect(sentText).toBe('Hi, Dana here');
-    });
-  });
-
   describe('reminders', () => {
-    it('creates, fires over SSE on the scheduler poll, and dismisses', async () => {
+    it('creates, fires over SSE on the housekeeping poll, and dismisses', async () => {
       await enableWithTwoAgents();
       const events: Array<{ event: string; data: any }> = [];
       t.relay.subscribe((e) => events.push(e as never));
@@ -394,10 +198,10 @@ describe('v2.8 agent workbench', () => {
       ).json();
       expect(r.agentEmail).toBe('dana@gmail.com');
 
-      await t.scheduler.tick();
+      t.housekeeping.tick();
       const fired = events.find((e) => e.event === 'REMINDER_DUE');
       expect(fired?.data).toMatchObject({ id: r.id, agentEmail: 'dana@gmail.com', note: 'call back' });
-      await t.scheduler.tick();
+      t.housekeeping.tick();
       expect(events.filter((e) => e.event === 'REMINDER_DUE')).toHaveLength(1); // no double fire
 
       // owners see their own; another agent does not
@@ -412,49 +216,4 @@ describe('v2.8 agent workbench', () => {
     });
   });
 
-  describe('per-agent insights + exports', () => {
-    it('aggregates job and chat sends per agent; viewOwn agents see only themselves', async () => {
-      await enableWithTwoAgents();
-      // one chat-screen send by dana + one 1:1 job by boss
-      await t.app.inject({ method: 'POST', url: '/api/send', headers: AGENT, payload: { recipient: '972521111111', item: textItem } });
-      const job = (
-        await createJob(ADMIN, [{ id: '972522222222' }], { scheduledAt: new Date(Date.now() - 1000).toISOString() })
-      ).json();
-      await waitFor(() => t.jobs.byId(job.id)?.status === 'done');
-
-      const all = (await t.app.inject({ method: 'GET', url: '/api/analytics/agents', headers: ADMIN })).json();
-      const byEmail = Object.fromEntries(all.agents.map((a: { email: string }) => [a.email, a]));
-      expect(byEmail['dana@gmail.com']).toMatchObject({ chatSends: 1, chatsTouched: 1 });
-      expect(byEmail['boss@gmail.com']).toMatchObject({ jobSent: 1 });
-
-      const own = (await t.app.inject({ method: 'GET', url: '/api/analytics/agents', headers: AGENT })).json();
-      expect(own.agents.map((a: { email: string }) => a.email)).toEqual(['dana@gmail.com']);
-
-      // a denied agent gets 403
-      await t.app.inject({
-        method: 'PUT', url: '/api/agents/dana%40gmail.com', headers: ADMIN,
-        payload: { perms: { 'insights.viewOwn': false } },
-      });
-      expect((await t.app.inject({ method: 'GET', url: '/api/analytics/agents', headers: AGENT })).statusCode).toBe(403);
-    });
-
-    it('serves the job ledger and the insights summary as CSV', async () => {
-      await enableWithTwoAgents();
-      const job = (
-        await createJob(ADMIN, [{ id: '972521111111' }], { scheduledAt: new Date(Date.now() - 1000).toISOString() })
-      ).json();
-      await waitFor(() => t.jobs.byId(job.id)?.status === 'done');
-
-      const ledger = await t.app.inject({ method: 'GET', url: `/api/jobs/${job.id}/ledger.csv` });
-      expect(ledger.headers['content-type']).toContain('text/csv');
-      expect(ledger.body).toContain('recipient,is_group,item_index,status');
-      expect(ledger.body).toContain('972521111111');
-
-      const summary = await t.app.inject({ method: 'GET', url: '/api/analytics/export.csv', headers: ADMIN });
-      expect(summary.headers['content-type']).toContain('text/csv');
-      expect(summary.body).toContain('day,sent,failed,skipped');
-      // insights.view is admin-only
-      expect((await t.app.inject({ method: 'GET', url: '/api/analytics/export.csv', headers: AGENT })).statusCode).toBe(403);
-    });
-  });
 });

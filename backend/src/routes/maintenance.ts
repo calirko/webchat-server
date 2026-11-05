@@ -8,7 +8,7 @@ interface MaintenanceDeps {
   maintenance: MaintenanceService;
   instances: InstancesService;
   access: InstanceAccess;
-  /** insights.view — the report feeds the Insights server-health card. */
+  /** settings.manage — the report feeds the Settings storage card. */
   requireViewer: preHandlerHookHandler;
   /** settings.manage — cleanup mutates data. */
   requireAdmin: preHandlerHookHandler;
@@ -23,7 +23,7 @@ export function registerMaintenance(app: FastifyInstance, deps: MaintenanceDeps)
     // Evolution-side numbers (the Message table is where chats actually
     // accumulate) — best-effort: the report must work while Evolution is
     // down. Filtered by instance grants like /api/instances: an
-    // insights-granted agent must not see lines they can't reach.
+    // admin-granted agent must not see lines they can't reach.
     let evolution: unknown = null;
     let evolutionError: string | null = null;
     try {

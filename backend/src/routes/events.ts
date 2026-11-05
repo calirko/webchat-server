@@ -14,14 +14,11 @@ import type { InstanceAccess } from '../services/instances.js';
  * so a future app payload carrying an `instance` field can't get dropped.
  */
 const APP_EVENTS = new Set([
-  'JOB_PROGRESS',
-  'JOB_APPROVAL',
   'CHAT_ASSIGNED',
   'CHAT_STATUS',
   'CHAT_TAGS',
   'AGENT_PRESENCE',
   'REMINDER_DUE',
-  'AI_AGENT_STATE',
 ]);
 
 export function registerEvents(

@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { unwrapEvent } from '../src/services/envelope.js';
+import { ReadReceiptStore } from '../src/services/readreceipts.js';
 import { makeApp, type TestApp } from './helpers.js';
 
 const flush = () => new Promise((r) => setImmediate(r));
@@ -10,8 +11,8 @@ const flush = () => new Promise((r) => setImmediate(r));
  * bare-record shape the tests fed them — these tests replay the production
  * shape so the regression can never come back.
  */
-// 'Test' = the configured default instance (helpers testConfig) — optout and
-// the chat watcher only act on the default instance's traffic.
+// 'Test' = the configured default instance (helpers testConfig) — the chat
+// watcher only acts on the default instance's traffic.
 const envelope = (event: string, data: unknown, instance = 'Test') => ({
   event,
   data: {
@@ -74,40 +75,17 @@ describe('listeners against the production envelope shape', () => {
     t.db.close();
   });
 
-  it('ack tracker marks delivered/read from enveloped MESSAGES_UPDATE', () => {
-    const job = t.jobs.upsert({
-      id: 'j1',
-      scheduledAt: new Date().toISOString(),
-      recipients: [{ id: '972521111111' }],
-      items: [{ type: 'text', data: { text: 'x' } }],
-    });
-    t.jobs.ensureLedger(job);
-    t.jobs.markSendDone(t.jobs.pendingSends('j1')[0]!, 'sent', 'msg-abc');
-
+  it('read tracker stamps the read time from an enveloped MESSAGES_UPDATE', () => {
+    const receipts = new ReadReceiptStore(t.db);
     t.relay.broadcast(envelope('messages.update', { keyId: 'msg-abc', status: 'DELIVERY_ACK' }));
-    expect(t.jobs.allSends('j1')[0]!.deliveredAt).not.toBeNull();
-
+    expect(receipts.readAtFor('msg-abc')).toBeNull();
     t.relay.broadcast(
       envelope('messages.update', { key: { id: 'msg-abc' }, update: { status: 'READ' } }),
     );
-    expect(t.jobs.allSends('j1')[0]!.readAt).not.toBeNull();
+    expect(receipts.readAtFor('msg-abc')).not.toBeNull();
   });
 
-  it('opt-out blacklists from an enveloped MESSAGES_UPSERT', async () => {
-    t.cfg.optoutEnabled = true;
-    t.relay.broadcast(
-      envelope('messages.upsert', {
-        key: { remoteJid: '972521111111@s.whatsapp.net', fromMe: false, id: 'in-1' },
-        pushName: 'Dana',
-        message: { conversation: 'STOP' },
-      }),
-    );
-    await flush();
-    expect(t.blacklist.isBlacklisted('972521111111')).toBe(true);
-  });
-
-  it('opt-out and chat watcher ignore a FOREIGN instance (acks still apply)', async () => {
-    t.cfg.optoutEnabled = true;
+  it('chat watcher ignores a FOREIGN instance', async () => {
     const jid = '972529999999@s.whatsapp.net';
     await t.app.inject({
       method: 'POST',
@@ -117,12 +95,11 @@ describe('listeners against the production envelope shape', () => {
     t.relay.broadcast(
       envelope(
         'messages.upsert',
-        { key: { remoteJid: jid, fromMe: false, id: 'x1' }, message: { conversation: 'STOP' } },
+        { key: { remoteJid: jid, fromMe: false, id: 'x1' }, message: { conversation: 'hi' } },
         'OtherLine',
       ),
     );
     await flush();
-    expect(t.blacklist.isBlacklisted('972529999999')).toBe(false);
     const meta = (await t.app.inject({ method: 'GET', url: '/api/chat-meta' })).json();
     expect(meta.statuses[jid]?.status).toBe('resolved');
   });

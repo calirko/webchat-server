@@ -1,5 +1,5 @@
 import type { Db } from '../db/index.js';
-import { inQuietHours } from './scheduler.js';
+import { inQuietHours } from './time.js';
 
 /**
  * Per-person notification preferences. Keyed by the Cloudflare Access identity
@@ -12,10 +12,6 @@ export interface NotifyPrefs {
   groups: boolean;
   /** Notify on direct (1:1) messages. */
   dms: boolean;
-  /** Push when a job this person created finishes. */
-  jobsEnded: boolean;
-  /** Only notify about a finished job when it had failures. */
-  jobsFailuresOnly: boolean;
   /** Mute window for notifications (distinct from send-side quiet hours). */
   quietEnabled: boolean;
   quietStart: string; // 'HH:MM'
@@ -28,8 +24,6 @@ export interface NotifyPrefs {
 export const DEFAULT_NOTIFY_PREFS: NotifyPrefs = {
   groups: true,
   dms: true,
-  jobsEnded: true,
-  jobsFailuresOnly: false,
   quietEnabled: false,
   quietStart: '21:00',
   quietEnd: '08:00',
@@ -51,8 +45,6 @@ interface PrefsRow {
 const rowToPrefs = (r: PrefsRow): NotifyPrefs => ({
   groups: !!r.groups,
   dms: !!r.dms,
-  jobsEnded: !!r.jobs_ended,
-  jobsFailuresOnly: !!r.jobs_failures_only,
   quietEnabled: !!r.quiet_enabled,
   quietStart: r.quiet_start,
   quietEnd: r.quiet_end,
@@ -84,14 +76,6 @@ export function shouldNotifyMessage(
   return opts.isGroup ? p.groups : p.dms;
 }
 
-/** Job-ended rule: off → never; failures-only → only when failed>0; else quiet hours apply. */
-export function shouldNotifyJob(p: NotifyPrefs, opts: { failed: number; now?: Date }): boolean {
-  if (!p.jobsEnded) return false;
-  if (p.jobsFailuresOnly && opts.failed <= 0) return false;
-  if (p.quietEnabled && inQuietHours(opts.now ?? new Date(), p.quietStart, p.quietEnd)) return false;
-  return true;
-}
-
 export class NotifyPrefsStore {
   private readonly q;
 
@@ -121,8 +105,9 @@ export class NotifyPrefsStore {
       agent_email: email,
       groups: next.groups ? 1 : 0,
       dms: next.dms ? 1 : 0,
-      jobs_ended: next.jobsEnded ? 1 : 0,
-      jobs_failures_only: next.jobsFailuresOnly ? 1 : 0,
+      // legacy columns (job-ended pushes were removed); kept NOT NULL-safe
+      jobs_ended: 0,
+      jobs_failures_only: 0,
       quiet_enabled: next.quietEnabled ? 1 : 0,
       quiet_start: next.quietStart,
       quiet_end: next.quietEnd,

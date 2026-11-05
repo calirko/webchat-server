@@ -16,8 +16,6 @@ describe('/api/notify-prefs + /api/push/test', () => {
     expect(def).toEqual({
       groups: true,
       dms: true,
-      jobsEnded: true,
-      jobsFailuresOnly: false,
       quietEnabled: false,
       quietStart: '21:00',
       quietEnd: '08:00',

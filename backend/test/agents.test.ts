@@ -4,14 +4,6 @@ import { makeApp, type TestApp } from './helpers.js';
 const HDR = { 'cf-access-authenticated-user-email': 'Dana.Levi@gmail.com' };
 const textItem = { type: 'text', data: { text: 'hi' } };
 
-async function waitFor(cond: () => boolean, ms = 3000): Promise<void> {
-  const t0 = Date.now();
-  while (!cond()) {
-    if (Date.now() - t0 > ms) throw new Error('waitFor timed out');
-    await new Promise((res) => setTimeout(res, 20));
-  }
-}
-
 describe('agent identification', () => {
   let t: TestApp;
   beforeEach(async () => {
@@ -52,20 +44,6 @@ describe('agent identification', () => {
 
     expect((await sendOnce()).statusCode).toBe(200);
     expect(await lookup(['msg-1'])).toEqual({});
-
-    const job = (
-      await t.app.inject({
-        method: 'POST',
-        url: '/api/jobs',
-        headers: HDR,
-        payload: {
-          scheduledAt: new Date(Date.now() + 3_600_000).toISOString(),
-          recipients: [{ id: '972521111111' }],
-          items: [textItem],
-        },
-      })
-    ).json();
-    expect(job.sentBy).toBeNull();
     // no agent was provisioned either
     expect((await t.app.inject({ method: 'GET', url: '/api/agents' })).json()).toEqual([]);
   });
@@ -82,7 +60,7 @@ describe('agent identification', () => {
     const me = (await t.app.inject({ method: 'GET', url: '/api/me', headers: HDR })).json();
     // first agent ever seen bootstraps as admin (so: every permission)
     expect(me).toMatchObject({ enabled: true, email: 'dana.levi@gmail.com', name: '', color: '', role: 'admin' });
-    expect(me.perms).toMatchObject({ 'settings.manage': true, 'jobs.approve': true });
+    expect(me.perms).toEqual({ 'settings.manage': true, 'agents.manage': true });
     const roster = (await t.app.inject({ method: 'GET', url: '/api/agents' })).json();
     expect(roster).toHaveLength(1);
     expect(roster[0]).toMatchObject({ email: 'dana.levi@gmail.com', active: true });
@@ -172,71 +150,6 @@ describe('agent identification', () => {
     expect(res.statusCode).toBe(201); // FakeEvo mirrors 201 ok → edit is stamped
     const map = await lookup(['EDITME']);
     expect(map['EDITME']?.editedBy).toMatchObject({ email: 'dana.levi@gmail.com', name: 'dana.levi' });
-  });
-
-  it('stamps jobs with sentBy and attributes the blast messages', async () => {
-    await enable();
-    const job = (
-      await t.app.inject({
-        method: 'POST',
-        url: '/api/jobs',
-        headers: HDR,
-        payload: {
-          scheduledAt: new Date().toISOString(),
-          type: 'immediate',
-          recipients: [{ id: '972521111111' }],
-          items: [textItem],
-        },
-      })
-    ).json();
-    expect(job.sentBy).toBe('dana.levi@gmail.com');
-    await waitFor(() => t.jobs.byId(job.id)?.status === 'done');
-
-    const sends = (
-      await t.app.inject({ method: 'GET', url: `/api/jobs/${job.id}/sends` })
-    ).json();
-    const messageId = sends[0].messageId as string;
-    expect(messageId).toBeTruthy();
-    const map = await lookup([messageId]);
-    expect(map[messageId]).toMatchObject({ email: 'dana.levi@gmail.com' });
-  });
-
-  it('rerun stamps the agent who pressed resend', async () => {
-    await enable();
-    // a finished job from before tracking (no sentBy)
-    const old = t.jobs.upsert({
-      scheduledAt: new Date(Date.now() - 3_600_000).toISOString(),
-      status: 'done',
-      recipients: [{ id: '972521111111' }],
-      items: [textItem],
-    });
-    expect(old.sentBy).toBeNull();
-    const clone = (
-      await t.app.inject({ method: 'POST', url: `/api/jobs/${old.id}/rerun`, headers: HDR })
-    ).json();
-    expect(clone.sentBy).toBe('dana.levi@gmail.com');
-    await waitFor(() => t.jobs.byId(clone.id)?.status === 'done');
-  });
-
-  it('an edit keeps the original creator stamp', async () => {
-    await enable();
-    const payload = {
-      scheduledAt: new Date(Date.now() + 3_600_000).toISOString(),
-      recipients: [{ id: '972521111111' }],
-      items: [textItem],
-    };
-    const job = (
-      await t.app.inject({ method: 'POST', url: '/api/jobs', headers: HDR, payload })
-    ).json();
-    const edited = (
-      await t.app.inject({
-        method: 'POST',
-        url: '/api/jobs',
-        headers: { 'cf-access-authenticated-user-email': 'yossi@gmail.com' },
-        payload: { ...payload, id: job.id },
-      })
-    ).json();
-    expect(edited.sentBy).toBe('dana.levi@gmail.com');
   });
 
   it('turning the toggle off stops stamping but keeps existing attribution queryable off-switch', async () => {

@@ -56,7 +56,7 @@ export function registerPush(
   app.put('/api/notify-prefs', async (req, reply) => {
     const b = (req.body ?? {}) as Record<string, unknown>;
     const patch: Partial<NotifyPrefs> = {};
-    for (const k of ['groups', 'dms', 'jobsEnded', 'jobsFailuresOnly', 'quietEnabled'] as const)
+    for (const k of ['groups', 'dms', 'quietEnabled'] as const)
       if (typeof b[k] === 'boolean') patch[k] = b[k] as boolean;
     for (const field of ['quietStart', 'quietEnd'] as const) {
       const v = b[field];

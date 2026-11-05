@@ -44,10 +44,10 @@ export function registerInstances(
     const allowed = access.allowedForRequest(req);
     const visible = allowed === null ? list : list.filter((i) => allowed.includes(i.name));
 
-    // counts/disconnect telemetry is an admin (insights) concern
+    // counts/disconnect telemetry is an admin concern
     const email = cfg.agentsEnabled ? emailFromRequest(req) : null;
     const agent = email ? agents.byEmail(email) : null;
-    const wantCounts = !agent || can(agent, 'insights.view');
+    const wantCounts = !agent || can(agent, 'settings.manage');
 
     return {
       default: cfg.evo.instance,

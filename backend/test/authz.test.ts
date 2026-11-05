@@ -35,20 +35,10 @@ describe('role-based permissions', () => {
   });
 
   it('blocks non-admins from admin routes with 403', async () => {
-    expect(await status('PUT', '/api/settings', AGENT, { delayMin: 0 })).toBe(403);
+    expect(await status('PUT', '/api/settings', AGENT, { retentionDays: 0 })).toBe(403);
     expect(await status('POST', '/api/settings/test', AGENT, {})).toBe(403);
-    expect(await status('GET', '/api/analytics/summary', AGENT)).toBe(403);
+    expect(await status('GET', '/api/maintenance', AGENT)).toBe(403);
     expect(await status('PUT', '/api/agents/worker%40x.com', AGENT, { name: 'W' })).toBe(403);
-  });
-
-  it('blocks agents from clearing job history (jobs.clearHistory), admins allowed', async () => {
-    expect(await status('POST', '/api/jobs/clear-done', AGENT, { scope: 'history' })).toBe(403);
-    expect(await status('POST', '/api/jobs/clear-done', ADMIN, { scope: 'history' })).toBe(200);
-    // a per-agent override can still grant it
-    await status('PUT', '/api/agents/worker%40x.com', ADMIN, {
-      perms: { 'jobs.clearHistory': true },
-    });
-    expect(await status('POST', '/api/jobs/clear-done', AGENT, { scope: 'history' })).toBe(200);
   });
 
   it('keeps shared routes open to non-admins', async () => {
@@ -59,16 +49,16 @@ describe('role-based permissions', () => {
   });
 
   it('lets admins through everywhere and /api/me reports the role', async () => {
-    expect(await status('PUT', '/api/settings', ADMIN, { delayMin: 0 })).toBe(200);
-    expect(await status('GET', '/api/analytics/summary', ADMIN)).toBe(200);
+    expect(await status('PUT', '/api/settings', ADMIN, { retentionDays: 0 })).toBe(200);
+    expect(await status('GET', '/api/maintenance', ADMIN)).toBe(200);
     expect(await status('PUT', '/api/agents/worker%40x.com', ADMIN, { name: 'W' })).toBe(200);
     const me = (await t.app.inject({ method: 'GET', url: '/api/me', headers: AGENT })).json();
     expect(me.role).toBe('agent');
   });
 
   it('allows requests without an Access identity (LAN/bearer/automation)', async () => {
-    expect(await status('PUT', '/api/settings', undefined, { delayMin: 0 })).toBe(200);
-    expect(await status('GET', '/api/analytics/summary')).toBe(200);
+    expect(await status('PUT', '/api/settings', undefined, { retentionDays: 0 })).toBe(200);
+    expect(await status('GET', '/api/maintenance')).toBe(200);
   });
 
   it('enforces nothing while the toggle is off', async () => {
@@ -78,8 +68,8 @@ describe('role-based permissions', () => {
       headers: ADMIN,
       payload: { agentsEnabled: false },
     });
-    expect(await status('PUT', '/api/settings', AGENT, { delayMin: 0 })).toBe(200);
-    expect(await status('GET', '/api/analytics/summary', AGENT)).toBe(200);
+    expect(await status('PUT', '/api/settings', AGENT, { retentionDays: 0 })).toBe(200);
+    expect(await status('GET', '/api/maintenance', AGENT)).toBe(200);
   });
 
   it('validates the role value', async () => {
@@ -97,7 +87,7 @@ describe('role-based permissions', () => {
     expect(await status('PUT', '/api/agents/admin%40x.com', ADMIN, { role: 'agent' })).toBe(200);
 
     // demoted: now locked out of admin routes
-    expect(await status('PUT', '/api/settings', ADMIN, { delayMin: 0 })).toBe(403);
+    expect(await status('PUT', '/api/settings', ADMIN, { retentionDays: 0 })).toBe(403);
 
     // deactivating the sole remaining admin is allowed (active is cosmetic)
     expect(

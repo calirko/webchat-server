@@ -161,12 +161,12 @@ describe('multi-instance: /api/instances + per-agent grants', () => {
 
   it('grant-limited agents get filtered maintenance telemetry and a stripped roster', async () => {
     await provision();
-    // the agent needs insights.view to read /api/maintenance at all
+    // the agent needs settings.manage to read /api/maintenance at all
     await t.app.inject({
       method: 'PUT',
       url: '/api/agents/agent%40x.com',
       headers: HDR('admin@x.com'),
-      payload: { instances: ['Second'], perms: { 'insights.view': true } },
+      payload: { instances: ['Second'], perms: { 'settings.manage': true } },
     });
     const m = (
       await t.app.inject({ method: 'GET', url: '/api/maintenance', headers: HDR('agent@x.com') })
@@ -262,120 +262,5 @@ describe('multi-instance: add/delete channels', () => {
       headers: HDR('agent@x.com'),
     });
     expect(res.statusCode).toBe(403);
-  });
-});
-
-describe('multi-instance: jobs carry their instance', () => {
-  let t: TestApp;
-  beforeEach(async () => {
-    t = await makeApp();
-  });
-  afterEach(async () => {
-    await t.app.close();
-    t.db.close();
-  });
-
-  const HDRS = { 'cf-access-authenticated-user-email': 'admin@x.com' };
-  const enable = () =>
-    t.app.inject({ method: 'PUT', url: '/api/settings', payload: { agentsEnabled: true } });
-
-  const jobBody = (extra: Record<string, unknown> = {}) => ({
-    scheduledAt: new Date(Date.now() + 3_600_000).toISOString(),
-    recipients: [{ id: '972521111111' }],
-    items: [{ type: 'text', data: { text: 'x' } }],
-    ...extra,
-  });
-
-  it('create stores the instance; edits keep it unless changed', async () => {
-    const created = (
-      await t.app.inject({ method: 'POST', url: '/api/jobs', payload: jobBody({ instance: 'Second' }) })
-    ).json();
-    expect(created.instance).toBe('Second');
-    const edited = (
-      await t.app.inject({
-        method: 'POST',
-        url: '/api/jobs',
-        payload: { ...jobBody(), id: created.id },
-      })
-    ).json();
-    expect(edited.instance).toBe('Second');
-  });
-
-  it('an agent denied the job\'s instance can neither create, edit, restore nor rerun it', async () => {
-    await enable();
-    await t.app.inject({ method: 'GET', url: '/api/me', headers: HDRS }); // admin bootstrap
-    const agentHdr = { 'cf-access-authenticated-user-email': 'agent@x.com' };
-    await t.app.inject({ method: 'GET', url: '/api/me', headers: agentHdr });
-
-    // create on a foreign instance → 403
-    const denied = await t.app.inject({
-      method: 'POST',
-      url: '/api/jobs',
-      headers: agentHdr,
-      payload: jobBody({ instance: 'Second' }),
-    });
-    expect(denied.statusCode).toBe(403);
-
-    // admin parks a job on Second; the agent cannot edit/restore/rerun it
-    const j = (
-      await t.app.inject({ method: 'POST', url: '/api/jobs', headers: HDRS, payload: jobBody({ instance: 'Second' }) })
-    ).json();
-    const edit = await t.app.inject({
-      method: 'POST',
-      url: '/api/jobs',
-      headers: agentHdr,
-      payload: { ...jobBody(), id: j.id },
-    });
-    expect(edit.statusCode).toBe(403);
-
-    await t.app.inject({ method: 'POST', url: `/api/jobs/${j.id}/cancel`, headers: HDRS });
-    const restore = await t.app.inject({
-      method: 'POST',
-      url: `/api/jobs/${j.id}/restore`,
-      headers: agentHdr,
-    });
-    expect(restore.statusCode).toBe(403);
-    expect(t.jobs.byId(j.id)!.status).toBe('cancelled'); // refused → unchanged
-
-    t.jobs.finish(j.id, 'done', 'x');
-    const rerun = await t.app.inject({
-      method: 'POST',
-      url: `/api/jobs/${j.id}/rerun`,
-      headers: agentHdr,
-    });
-    expect(rerun.statusCode).toBe(403);
-  });
-
-  it('the scheduler sends through the job\'s instance and roll-forward inherits it', async () => {
-    // this test is about ROUTING, not connectivity — the shared fixture has
-    // 'Second' disconnected, which the send-time health guard would (rightly)
-    // refuse to send through. Set before anything can cache the instance list.
-    t.evo.evoInstances = t.evo.evoInstances.map((i) =>
-      i.name === 'Second' ? { ...i, connectionStatus: 'open' } : i,
-    );
-    await t.app.inject({
-      method: 'PUT',
-      url: '/api/settings',
-      payload: { recurringEnabled: true },
-    });
-    const j = (
-      await t.app.inject({
-        method: 'POST',
-        url: '/api/jobs',
-        payload: {
-          scheduledAt: new Date(Date.now() - 1000).toISOString(),
-          recipients: [{ id: '972521111111' }],
-          items: [{ type: 'text', data: { text: 'x' } }],
-          instance: 'Second',
-          repeat: { freq: 'daily' },
-        },
-      })
-    ).json();
-    await t.scheduler.tick();
-    const sendCall = t.evo.calls.find((c) => c.endpoint.startsWith('/message/'));
-    expect(sendCall!.endpoint).toContain('/Second');
-    expect(t.jobs.byId(j.id)!.status).toBe('done');
-    const next = t.jobs.all().find((x) => x.id !== j.id && x.repeat);
-    expect(next?.instance).toBe('Second');
   });
 });

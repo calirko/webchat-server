@@ -5,11 +5,9 @@ import { EventRelay } from '../src/services/events.js';
 import {
   DEFAULT_NOTIFY_PREFS,
   NotifyPrefsStore,
-  shouldNotifyJob,
   shouldNotifyMessage,
 } from '../src/services/notifyprefs.js';
 import {
-  attachJobNotifier,
   attachPushNotifier,
   messagePreview,
   messageText,
@@ -228,53 +226,6 @@ describe('web push', () => {
     expect(calls).toEqual(['https://push/alice']); // keyword pierces the mute
   });
 
-  it('pushes a job-ended summary to the creator, gated by prefs', async () => {
-    const calls: Array<{ endpoint: string; payload: any }> = [];
-    const push = new PushService(db, {
-      transport: async (s, payload) => {
-        calls.push({ endpoint: s.endpoint, payload: JSON.parse(payload) });
-        return { statusCode: 201 };
-      },
-    });
-    const prefs = new NotifyPrefsStore(db);
-    const relay = new EventRelay({ base: 'x', instance: 'Test', apikey: 'k', enabled: false }, () => {});
-    const jobs = { byId: (id: string) => (id === 'j1' ? { sentBy: 'alice@x.com' } : null) };
-    attachJobNotifier(relay, push, jobs, prefs);
-    push.saveSubscription('alice@x.com', sub('https://push/alice'));
-    push.saveSubscription('bob@x.com', sub('https://push/bob'));
-
-    // a finished job pings only its creator
-    relay.broadcast({
-      event: 'JOB_PROGRESS',
-      data: { jobId: 'j1', done: true, total: 3, sent: 3, skipped: 0, failed: 0, status: 'done' },
-    });
-    await tick();
-    expect(calls.map((c) => c.endpoint)).toEqual(['https://push/alice']);
-    expect(calls[0]!.payload).toMatchObject({ title: 'Job finished', tag: 'job:j1' });
-
-    // in-progress (done:false) events are ignored
-    calls.length = 0;
-    relay.broadcast({ event: 'JOB_PROGRESS', data: { jobId: 'j1', done: false, sent: 1 } });
-    await tick();
-    expect(calls).toEqual([]);
-
-    // failures-only: a clean job is silent, a job with failures notifies
-    prefs.set('alice@x.com', { jobsFailuresOnly: true });
-    relay.broadcast({
-      event: 'JOB_PROGRESS',
-      data: { jobId: 'j1', done: true, total: 3, sent: 3, failed: 0, status: 'done' },
-    });
-    await tick();
-    expect(calls).toEqual([]);
-    relay.broadcast({
-      event: 'JOB_PROGRESS',
-      data: { jobId: 'j1', done: true, total: 3, sent: 1, failed: 2, status: 'failed' },
-    });
-    await tick();
-    expect(calls.map((c) => c.endpoint)).toEqual(['https://push/alice']);
-    expect(calls[0]!.payload).toMatchObject({ title: 'Job failed' });
-  });
-
   it('sendToEndpoint targets a single known device (the test-notification path)', async () => {
     const calls: string[] = [];
     const push = new PushService(db, {
@@ -311,14 +262,6 @@ describe('notify gates (pure)', () => {
     expect(
       shouldNotifyMessage({ ...quiet, keywords: 'urgent' }, { isGroup: false, text: 'urgent', now: night }),
     ).toBe(true);
-  });
-
-  it('job gate: enabled + failures-only', () => {
-    const base = { ...DEFAULT_NOTIFY_PREFS };
-    expect(shouldNotifyJob(base, { failed: 0 })).toBe(true);
-    expect(shouldNotifyJob({ ...base, jobsEnded: false }, { failed: 5 })).toBe(false);
-    expect(shouldNotifyJob({ ...base, jobsFailuresOnly: true }, { failed: 0 })).toBe(false);
-    expect(shouldNotifyJob({ ...base, jobsFailuresOnly: true }, { failed: 2 })).toBe(true);
   });
 
   it('messageText extracts raw text/caption for keyword matching', () => {

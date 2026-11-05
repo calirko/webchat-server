@@ -1,4 +1,4 @@
-import type { JobItem } from '../types.js';
+import type { MessageItem } from '../types.js';
 
 export interface EvoRequest {
   endpoint: string;
@@ -10,7 +10,7 @@ export interface EvoRequest {
  * buildJobItemBody() — the item shapes are the SPA's wire format, so behavior
  * here must match what the frontend produces.
  */
-export function buildEvoRequest(item: JobItem, number: string, instance: string): EvoRequest {
+export function buildEvoRequest(item: MessageItem, number: string, instance: string): EvoRequest {
   const { type } = item;
   const data = (item.data ?? {}) as Record<string, any>;
 

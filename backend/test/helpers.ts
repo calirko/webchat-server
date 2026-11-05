@@ -6,11 +6,8 @@ import type { EvoResponse, EvolutionApi } from '../src/services/evolution.js';
 export function testConfig(overrides: Partial<Config> = {}): Config {
   const cfg = loadConfig({
     DB_PATH: ':memory:',
-    DELAY_MIN: '0',
-    DELAY_MAX: '0',
     // tests drive the relay manually — never open real upstream sockets
     EVENTS_ENABLED: 'false',
-    SEND_MAX_ATTEMPTS: '3',
     EVOLUTION_BASE: 'https://evolution.test',
     EVOLUTION_INSTANCE: 'Test',
     EVOLUTION_APIKEY: 'test-key',
