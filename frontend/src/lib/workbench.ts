@@ -7,34 +7,13 @@ import { useBusEvent } from './eventBus';
 import { notifyMessage } from './notify';
 
 /**
- * Mirror of the server's bulk-approval rule, purely for honest button labels:
- * a send over the threshold by an agent without "send without approval" lands
- * in the approval queue instead of firing. The server re-evaluates and
- * enforces regardless of what we predict here.
- */
-export function useNeedsApproval(recipientCount: number): { needed: boolean; threshold: number } {
-  const me = useMe();
-  const settings = useQuery({ queryKey: ['settings'], queryFn: api.settings.get, staleTime: 60_000 });
-  const threshold = Math.max(1, settings.data?.approvalThreshold ?? 1);
-  const needed =
-    !!me.data?.enabled &&
-    !!me.data.email &&
-    me.data.perms?.['jobs.sendWithoutApproval'] === false &&
-    recipientCount > threshold;
-  return { needed, threshold };
-}
-
-/**
  * v2.8 agent-workbench client plumbing: chat meta (assignment / status /
  * tags / aliases), reminders, live agent presence, and the heartbeat that
  * feeds it. All server rows are keyed by canonical jid — canonJid() maps
  * whatever jid the chat list dedup picked onto that key.
  */
 
-// AI_AGENT_STATE rides along: the AI pill lives in the same payload, so a
-// take-over, a handoff or a spent reply allowance updates every open tab the
-// same way an assignment does.
-const META_EVENTS = ['CHAT_ASSIGNED', 'CHAT_STATUS', 'CHAT_TAGS', 'AI_AGENT_STATE'] as const;
+const META_EVENTS = ['CHAT_ASSIGNED', 'CHAT_STATUS', 'CHAT_TAGS'] as const;
 
 export function useChatMeta() {
   const qc = useQueryClient();
@@ -134,18 +113,4 @@ export function useWorkbenchNotifications(toast: (text: string, kind?: 'ok' | 'e
       data?.chatJid ? `/?chat=${encodeURIComponent(data.chatJid)}` : undefined,
     );
   });
-
-  useBusEvent('JOB_APPROVAL', (data: any) => {
-    void qc.invalidateQueries({ queryKey: ['jobs'] });
-    const action = data?.action as string;
-    const self = me.data?.email && data?.by === me.data.email;
-    if (action === 'submitted' && hasApprove(me) && !self)
-      toast('A job is awaiting your approval');
-    else if (action === 'approved' && !hasApprove(me)) toast('Your job was approved and queued');
-    else if (action === 'rejected' && !hasApprove(me))
-      toast(data?.reason ? `Job rejected: ${data.reason}` : 'Your job was rejected', 'err');
-  });
 }
-
-const hasApprove = (me: ReturnType<typeof useMe>): boolean =>
-  !!me.data && (!me.data.enabled || !me.data.email || !me.data.perms || me.data.perms['jobs.approve']);

@@ -1,14 +1,9 @@
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { useEffect, useMemo, useState } from 'react';
 import { useConfirm } from '../components/Confirm';
-import QueueEditor, { finalizeItems, validateItem } from '../components/QueueEditor';
-import SendProgress from '../components/SendProgress';
 import { useToast } from '../components/Toast';
 import { api } from '../lib/api';
 import { buildContactNames, displayNumber } from '../lib/chatModel';
-import { useJobSend } from '../lib/useJobSend';
-import { useNeedsApproval } from '../lib/workbench';
-import type { JobItem } from '../types';
 
 type SubTab = 'browse' | 'create' | 'manage';
 
@@ -45,7 +40,7 @@ function sortGroups(list: Array<Record<string, any>>): Array<Record<string, any>
   );
 }
 
-/* ── Browse & Send ─────────────────────────────────────────────────────── */
+/* ── Browse ─────────────────────────────────────────────────────── */
 
 function BrowseTab({
   selected,
@@ -56,17 +51,9 @@ function BrowseTab({
   setSelected: (s: Set<string>) => void;
   goManage: () => void;
 }) {
-  const qc = useQueryClient();
   const groups = useGroups();
   const [filter, setFilter] = useState('');
-  // start with an empty Text block already chosen, like Compose — the agent
-  // can type a broadcast immediately instead of first clicking "+ Text".
-  const [items, setItems] = useState<JobItem[]>(() => [{ type: 'text', data: { text: '' } }]);
-  const [when, setWhen] = useState('');
-  const [showSchedule, setShowSchedule] = useState(false);
-  const [feedback, setFeedback] = useState('');
   const [extracting, setExtracting] = useState(false);
-  const { progress, setProgress, run } = useJobSend();
 
   const list = sortGroups(
     ((Array.isArray(groups.data) ? groups.data : []) as Array<Record<string, any>>)
@@ -76,55 +63,11 @@ function BrowseTab({
       ),
   );
 
-  const ready = selected.size > 0 && items.length > 0 && items.every((i) => !validateItem(i));
-  const recipients = [...selected].map((id) => ({ id, isGroup: true }));
-  const { needed: willNeedApproval } = useNeedsApproval(selected.size);
-
   function toggle(id: string) {
     const next = new Set(selected);
     if (next.has(id)) next.delete(id);
     else next.add(id);
     setSelected(next);
-  }
-
-  /** Same server-side job path as Compose "Send Now" — so a broadcast lands in
-   *  History with a per-group ledger and survives a closed tab. */
-  async function broadcast() {
-    setFeedback('');
-    try {
-      const result = await run(recipients, finalizeItems(items));
-      setFeedback(
-        result.held
-          ? 'Submitted for approval — it sends once an approver releases it (Scheduled tab)'
-          : 'Broadcast done — full record in the History tab',
-      );
-    } catch (e) {
-      setFeedback(`Broadcast failed — ${String((e as Error).message ?? e)}`);
-    } finally {
-      qc.invalidateQueries({ queryKey: ['jobs'] });
-    }
-  }
-
-  async function schedule() {
-    setFeedback('');
-    setProgress(null);
-    try {
-      const saved = await api.jobs.save({
-        scheduledAt: new Date(when).toISOString(),
-        recipients,
-        items: finalizeItems(items),
-        type: 'group-broadcast',
-      });
-      setFeedback(
-        saved.status === 'pending_approval'
-          ? 'Submitted for approval — it fires once an approver releases it (Scheduled tab)'
-          : `Scheduled for ${new Date(when).toLocaleString()} → Scheduled tab`,
-      );
-      setShowSchedule(false);
-      qc.invalidateQueries({ queryKey: ['jobs'] });
-    } catch (e) {
-      setFeedback(`Scheduling failed — ${String((e as Error).message ?? e)}`);
-    }
   }
 
   return (
@@ -203,45 +146,6 @@ function BrowseTab({
             onClose={() => setExtracting(false)}
           />
         )}
-        <div className="flex flex-col gap-3 rounded-xl border border-gray-200 bg-white p-4 shadow-sm">
-          <h3 className="text-sm font-semibold text-gray-800">Message Sequence</h3>
-          <QueueEditor items={items} onChange={setItems} />
-          <div className="flex gap-2">
-            <button
-              onClick={() => void broadcast()}
-              disabled={!ready || progress?.running}
-              className="flex-1 rounded-lg bg-wa py-2.5 text-sm font-semibold text-white hover:bg-wa-dark disabled:opacity-50"
-            >
-              {willNeedApproval ? 'Submit for approval' : 'Broadcast'} to {selected.size} group
-              {selected.size === 1 ? '' : 's'}
-            </button>
-            <button
-              onClick={() => setShowSchedule(!showSchedule)}
-              className="rounded-lg border border-gray-300 px-3 py-2.5 text-sm text-gray-600 hover:border-wa hover:bg-green-50"
-            >
-              🕐
-            </button>
-          </div>
-          {showSchedule && (
-            <div className="flex items-center gap-2 rounded-xl border border-gray-200 bg-gray-50 p-3">
-              <input
-                type="datetime-local"
-                value={when}
-                onChange={(e) => setWhen(e.target.value)}
-                className="min-w-0 flex-1 rounded-lg border border-gray-300 px-3 py-2 text-sm"
-              />
-              <button
-                onClick={() => void schedule()}
-                disabled={!ready || !when}
-                className="rounded-lg bg-wa px-4 py-2 text-sm font-semibold text-white disabled:opacity-50"
-              >
-                Confirm
-              </button>
-            </div>
-          )}
-          {progress && <SendProgress progress={progress} />}
-          {feedback && <div className="text-sm text-wa-dark">{feedback}</div>}
-        </div>
       </div>
     </div>
   );

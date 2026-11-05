@@ -11,118 +11,15 @@ import { convTimestamp } from './lib/chatModel';
 import { effectiveUnread, readMarksVersion, subscribeReadMarks } from './lib/readMarks';
 import { useWorkbenchNotifications } from './lib/workbench';
 import { applyTheme, initialTheme, type Theme } from './lib/theme';
-import BlacklistPage from './pages/BlacklistPage';
 import ChatPage from './pages/ChatPage';
-import ComposePage from './pages/ComposePage';
 import GroupsPage from './pages/GroupsPage';
-import InsightsPage from './pages/InsightsPage';
-import JobsPage from './pages/JobsPage';
-import ListsPage from './pages/ListsPage';
 import PreferencesPage from './pages/PreferencesPage';
 import ProfilePage from './pages/ProfilePage';
-import QuickRepliesPage from './pages/QuickRepliesPage';
 import SettingsPage from './pages/SettingsPage';
-import ToolsPage from './pages/ToolsPage';
 import { NAV_EVENT, type NavTarget, targetFromUrl } from './lib/nav';
-import {
-  applyOrder,
-  DEFAULT_ORDER,
-  TABS,
-  useToolbarSlotCount,
-  useVisibleTabs,
-  type Tab,
-  type TabId,
-} from './lib/tabs';
+import { TABS, useVisibleTabs, type TabId } from './lib/tabs';
 
-const HAMBURGER = 'M4 6h16M4 12h16M4 18h16';
 const SETTINGS_ICON = TABS.find((t) => t.id === 'settings')!.icon;
-
-/**
- * Overflow menu holding the secondary tabs. Rendered in both the desktop
- * header and the mobile top strip; the dropdown lives outside any
- * overflow-scroll container so it is never clipped.
- */
-function MoreMenu({
-  variant,
-  tabs,
-  activeId,
-}: {
-  variant: 'desktop' | 'mobile';
-  tabs: Tab[];
-  activeId: TabId;
-}) {
-  const [open, setOpen] = useState(false);
-  const ref = useRef<HTMLDivElement>(null);
-  useEffect(() => {
-    if (!open) return;
-    const close = (e: MouseEvent) => {
-      if (!ref.current?.contains(e.target as Node)) setOpen(false);
-    };
-    document.addEventListener('mousedown', close);
-    return () => document.removeEventListener('mousedown', close);
-  }, [open]);
-  if (!tabs.length) return null;
-  const activeInMore = tabs.some((t) => t.id === activeId);
-  return (
-    <div ref={ref} className="relative">
-      {variant === 'desktop' ? (
-        <button
-          onClick={() => setOpen((o) => !o)}
-          aria-haspopup="menu"
-          aria-expanded={open}
-          title="More"
-          className={`flex shrink-0 items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium transition-colors ${
-            activeInMore ? 'bg-wa text-white' : 'text-gray-600 hover:bg-gray-100'
-          }`}
-        >
-          <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" d={HAMBURGER} />
-          </svg>
-          <span>More</span>
-        </button>
-      ) : (
-        <button
-          onClick={() => setOpen((o) => !o)}
-          aria-haspopup="menu"
-          aria-expanded={open}
-          aria-label="More"
-          className={`flex h-11 w-11 shrink-0 items-center justify-center rounded-full ${
-            activeInMore ? 'text-wa-dark' : 'text-gray-500'
-          }`}
-        >
-          <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24" aria-hidden="true">
-            <path strokeLinecap="round" strokeLinejoin="round" d={HAMBURGER} />
-          </svg>
-        </button>
-      )}
-      {open && (
-        <div
-          role="menu"
-          className={`absolute top-full z-30 mt-1 w-44 rounded-lg border border-gray-200 bg-white py-1 shadow-lg ${
-            variant === 'desktop' ? 'left-0' : 'left-1'
-          }`}
-        >
-          {tabs.map((t) => (
-            <Link
-              key={t.id}
-              to={`/${t.id}`}
-              role="menuitem"
-              onClick={() => setOpen(false)}
-              className={`flex w-full items-center gap-2 px-3 py-2 text-sm ${
-                activeId === t.id ? 'bg-wa text-white' : 'text-gray-600 hover:bg-gray-100'
-              }`}
-            >
-              <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" strokeWidth={1.8} viewBox="0 0 24 24" aria-hidden="true">
-                <path strokeLinecap="round" strokeLinejoin="round" d={t.icon} />
-              </svg>
-              <span>{t.label}</span>
-            </Link>
-          ))}
-        </div>
-      )}
-    </div>
-  );
-}
 
 /**
  * Which WhatsApp channel (Evolution instance) this browser works on. Hidden
@@ -354,33 +251,21 @@ function App() {
   const me = useMe();
   useWorkbenchNotifications(useToast());
   const { tabs, hidden } = useVisibleTabs();
-  const toolbarPrefsQ = useQuery({ queryKey: ['toolbarPrefs'], queryFn: api.toolbarPrefs.get });
-  // Settings is pinned as its own gear icon, not part of the customizable order.
-  const orderable = tabs.filter((t) => t.id !== 'settings');
-  const ordered = applyOrder(orderable, toolbarPrefsQ.data?.order ?? DEFAULT_ORDER);
-  const desktopSlots = useToolbarSlotCount('desktop');
-  const mobileSlots = useToolbarSlotCount('mobile');
-  const primaryTabs = ordered.slice(0, desktopSlots);
-  const moreTabs = ordered.slice(desktopSlots);
-  const mobilePrimaryTabs = ordered.slice(0, mobileSlots);
-  const mobileMoreTabs = ordered.slice(mobileSlots);
+  // Settings is pinned as its own gear icon, not part of the tab strip.
+  const navTabs = tabs.filter((t) => t.id !== 'settings');
   // A hidden tab's route redirects to Chat instead (see `guard` below) —
   // declarative, so it can't race the render the way the old setTab-in-effect did.
   const guard = (id: TabId, element: ReactElement) => (hidden.has(id) ? <Navigate to="/chat" replace /> : element);
   // Where a clicked notification (or in-app deep link) wants to land. Cleared
-  // by the destination page once it has opened the chat / focused the job, so a
-  // later remount of that page doesn't re-apply a stale target.
+  // by the destination page once it has opened the chat, so a later remount
+  // of that page doesn't re-apply a stale target.
   const [chatTarget, setChatTarget] = useState<{ jid: string; msg: string | null } | null>(null);
-  const [jobTarget, setJobTarget] = useState<string | null>(null);
   const applyTarget = useCallback(
     (t: NavTarget | null) => {
       if (!t) return;
       if (t.chat) {
         navigate('/chat', { replace: true });
         setChatTarget({ jid: t.chat, msg: t.msg ?? null });
-      } else if (t.job) {
-        navigate('/history', { replace: true });
-        setJobTarget(t.job);
       } else if (t.tab && TABS.some((x) => x.id === t.tab)) {
         navigate(`/${t.tab}`, { replace: true });
       }
@@ -388,7 +273,7 @@ function App() {
     [navigate],
   );
 
-  // Deep links: the composer's "manage all" link, and notification clicks
+  // Deep links: notification clicks
   // routed in-page from the service worker (see lib/nav, public/sw.js).
   useEffect(() => {
     const onNav = (e: Event) => applyTarget((e as CustomEvent<NavTarget>).detail);
@@ -401,7 +286,7 @@ function App() {
   // Warm start: an already-open tab gets the destination posted by the SW.
   useEffect(() => {
     // applyTarget's own navigate(..., { replace: true }) already lands on a
-    // clean tab path, which drops the ?chat=/?job= query string for us.
+    // clean tab path, which drops the ?chat= query string for us.
     const cold = targetFromUrl(window.location.href);
     if (cold) applyTarget(cold);
     const onMsg = (e: MessageEvent) => {
@@ -449,9 +334,8 @@ function App() {
     <div className="flex h-dvh flex-col bg-gray-50 text-gray-900">
       {/* desktop-only: on mobile the top tab bar replaces this whole lane */}
       <header className="flex items-center gap-2 border-b border-gray-200 bg-white px-3 py-2 shadow-sm max-md:hidden md:gap-4">
-        <MoreMenu variant="mobile" tabs={moreTabs} activeId={tab} />
         <nav className="flex gap-1 max-md:hidden" aria-label="Main">
-          {primaryTabs.map((t) => (
+          {navTabs.map((t) => (
             <Link
               key={t.id}
               to={`/${t.id}`}
@@ -528,11 +412,8 @@ function App() {
         className={`${threadOpen && tab === 'chat' ? 'hidden' : 'flex'} items-stretch border-b border-gray-200 bg-white pt-[env(safe-area-inset-top)] md:hidden`}
         aria-label="Main"
       >
-        <div className="flex shrink-0 items-center border-r border-gray-100 pl-1 pr-1">
-          <MoreMenu variant="mobile" tabs={mobileMoreTabs} activeId={tab} />
-        </div>
         <div className="flex flex-1 overflow-x-auto">
-          {mobilePrimaryTabs.map((t) => (
+          {navTabs.map((t) => (
             <Link
               key={t.id}
               to={`/${t.id}`}
@@ -591,24 +472,6 @@ function App() {
             }
           />
           <Route path="/groups" element={<GroupsPage />} />
-          <Route path="/compose" element={<ComposePage />} />
-          <Route path="/lists" element={<ListsPage />} />
-          <Route path="/insights" element={guard('insights', <InsightsPage />)} />
-          <Route path="/tools" element={<ToolsPage />} />
-          <Route path="/quickreplies" element={<QuickRepliesPage />} />
-          <Route path="/scheduled" element={<JobsPage scope="scheduled" onCompose={() => navigate('/compose')} />} />
-          <Route
-            path="/history"
-            element={
-              <JobsPage
-                scope="history"
-                onCompose={() => navigate('/compose')}
-                focusJob={jobTarget}
-                onJobFocused={() => setJobTarget(null)}
-              />
-            }
-          />
-          <Route path="/blacklist" element={<BlacklistPage />} />
           <Route path="/profile" element={<ProfilePage />} />
           <Route path="/preferences" element={<PreferencesPage />} />
           <Route path="/settings" element={guard('settings', <SettingsPage />)} />

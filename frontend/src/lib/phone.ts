@@ -1,7 +1,7 @@
 /**
- * Phone normalization — must stay identical to the backend's normalizePhone
- * (backend/src/services/phone.ts) so the compose blacklist warning predicts
- * exactly what the server will skip.
+ * Phone normalization — mirrors the backend's normalizePhone
+ * (backend/src/services/phone.ts) so a number typed in "New chat" lands on
+ * the same jid the server would build.
  */
 export function normalizePhone(raw: unknown): string | null {
   if (raw == null) return null;

@@ -78,7 +78,7 @@ function JID() {
 describe('per-instance scoping', () => {
   afterEach(() => setActiveInstance(''));
 
-  it('appends ?instance= to jobs, quick replies and analytics when a line is active', async () => {
+  it('appends ?instance= to Evolution-backed calls when a line is active', async () => {
     setActiveInstance('Second');
     const urls: string[] = [];
     globalThis.fetch = vi.fn(async (url: string) => {
@@ -86,39 +86,27 @@ describe('per-instance scoping', () => {
       return jsonResponse([]);
     }) as unknown as typeof fetch;
 
-    await api.jobs.list();
-    await api.jobs.page('scheduled');
-    await api.quickReplies.list();
-    await api.quickReplies.create('hi', 'Hello');
-    await api.analytics({ days: 7 });
-    await api.agentInsights({ days: 7 });
+    await api.chats.list();
+    await api.chats.messages(JID());
+    await api.chats.groups();
+    await api.send(JID(), { type: 'text', data: { text: 'hi' } });
 
-    expect(urls).toHaveLength(6);
+    expect(urls).toHaveLength(4);
     for (const u of urls) expect(u).toContain('instance=Second');
-    expect(api.analyticsCsvUrl({ days: 7 })).toContain('instance=Second');
   });
 
-  it('omits instance for the default (empty) line', async () => {
+  it('omits instance for the default (empty) line and for instance-free routes', async () => {
+    setActiveInstance('Second');
     const urls: string[] = [];
     globalThis.fetch = vi.fn(async (url: string) => {
       urls.push(String(url));
       return jsonResponse([]);
     }) as unknown as typeof fetch;
 
-    await api.jobs.list();
+    await api.chatMeta.get(); // instance-free even with a line active
+    setActiveInstance('');
+    await api.chats.list();
     expect(urls[0]).not.toContain('instance=');
-  });
-});
-
-describe('ledger CSV url', () => {
-  it('is the plain ledger with no filter, and carries one when there is', () => {
-    expect(api.jobs.ledgerCsvUrl('job_1')).toBe('/api/jobs/job_1/ledger.csv');
-    expect(api.jobs.ledgerCsvUrl('job_1', { status: 'failed' })).toBe(
-      '/api/jobs/job_1/ledger.csv?status=failed',
-    );
-    // the search box's digits ride along, so the download matches the table
-    expect(api.jobs.ledgerCsvUrl('job_1', { status: 'pending', q: ' 972521 ' })).toBe(
-      '/api/jobs/job_1/ledger.csv?status=pending&q=972521',
-    );
+    expect(urls[1]).not.toContain('instance=');
   });
 });

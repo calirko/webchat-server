@@ -1,13 +1,10 @@
-import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { lazy, Suspense, useEffect, useLayoutEffect, useMemo, useRef, useState, useSyncExternalStore } from 'react';
 import type { EmojiStyle } from 'emoji-picker-react';
-import BlacklistAddDialog from '../components/BlacklistAddDialog';
 import { useConfirm } from '../components/Confirm';
 import { useToast } from '../components/Toast';
 import { agentBadgeClass, agentLabel, useAgents, useMe } from '../lib/agents';
 import { api } from '../lib/api';
-import { isOngoingForChat } from '../lib/campaign';
-import { navigate as navigateTo } from '../lib/nav';
 import {
   canonJid,
   syncAliases,
@@ -42,13 +39,8 @@ import {
   type ThreadFetchResult,
 } from '../lib/chatModel';
 import { applyLocalDeletes, buildOptimistic, matchReconciled, mergePending, reconcilePending, type LocalDelete, type PendingSend } from '../lib/optimistic';
-import { normalizePhone, phoneKey } from '../lib/phone';
-import { fillAgentName, useQuickReplies } from '../lib/quickReplies';
-import QuickRepliesModal from './chat/QuickRepliesModal';
 import { refreshChats, useEvents } from '../lib/useEvents';
-import { usePendingRecipientKeys } from '../lib/usePendingRecipients';
 import { fileToBase64, VoiceRecorder } from '../lib/voice';
-import type { Job } from '../types';
 import AttachPreview from './chat/AttachPreview';
 import ContactCard from './chat/ContactCard';
 import ForwardModal from './chat/ForwardModal';
@@ -67,7 +59,6 @@ const FILTERS = [
   { id: 'pending', label: 'Pending' },
   { id: 'resolved', label: 'Resolved' },
   { id: 'groups', label: 'Groups' },
-  { id: 'scheduled', label: 'Scheduled' },
   { id: 'archived', label: 'Archived' },
 ] as const;
 type FilterId = (typeof FILTERS)[number]['id'];
@@ -180,41 +171,6 @@ function listTime(ts: number): string {
   return d.toDateString() === today.toDateString()
     ? d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     : d.toLocaleDateString();
-}
-
-/** "Today 20:00" / "Tomorrow 09:00" / "12/06 14:30" for scheduled-message labels. */
-function scheduleLabel(iso: string): string {
-  const d = new Date(iso);
-  const time = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-  const today = new Date();
-  const tomorrow = new Date(today);
-  tomorrow.setDate(today.getDate() + 1);
-  if (d.toDateString() === today.toDateString()) return `Today ${time}`;
-  if (d.toDateString() === tomorrow.toDateString()) return `Tomorrow ${time}`;
-  return `${d.toLocaleDateString([], { day: '2-digit', month: '2-digit' })} ${time}`;
-}
-
-/**
- * One-line preview of a scheduled job's next item, for the in-thread bubble.
- * `itemIndex` is which item THIS recipient is actually still owed — in a
- * multi-item sequence they may have already received item 0, so previewing
- * item 0 unconditionally would re-show already-sent content as if it were
- * still queued.
- */
-function jobPreview(job: Job, itemIndex = 0): string {
-  const item = job.items[itemIndex] ?? job.items[0];
-  if (!item) return '(empty)';
-  const text = (item.data?.text ?? item.data?.caption) as string | undefined;
-  if (text) return text;
-  if (item.type === 'media') return '📎 Attachment';
-  if (item.type === 'voice') return '🎤 Voice note';
-  return item.type;
-}
-
-/** Set a datetime-local input value (local-time, minute precision) from a Date. */
-function toLocalInput(d: Date): string {
-  d.setSeconds(0, 0);
-  return new Date(d.getTime() - d.getTimezoneOffset() * 60_000).toISOString().slice(0, 16);
 }
 
 /** Skeleton bubbles shown while a thread loads. */
@@ -421,44 +377,20 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
   // entry — fall back to meTag for THOSE ids only (never another agent's message).
   const iSentRef = useRef<Set<string>>(new Set());
 
-  // Pending scheduled jobs addressed to THIS chat — rendered as ghost bubbles.
-  // Matched by phone digits, not raw equality: a mass-imported campaign's
-  // recipients are bare phone strings (never touched a contact picker),
-  // while `jid` here is always the full `<digits>@s.whatsapp.net` form.
-  const scheduled = useQuery({
-    queryKey: ['jobs'],
-    queryFn: api.jobs.list,
-    refetchInterval: 30_000,
-    select: (jobs) =>
-      jobs
-        .filter((j) => isOngoingForChat(j) && j.recipients.some((r) => phoneKey(r.id) === phoneKey(jid)))
-        .sort((a, b) => a.scheduledAt.localeCompare(b.scheduledAt)),
-  });
-  const candidateJobs = scheduled.data ?? [];
-  // A multi-recipient campaign can be mid-run with THIS recipient already
-  // sent to while the job stays pending/paused for the others — confirm
-  // against the ledger before showing it as still outstanding here.
-  const pendingByJob = usePendingRecipientKeys(candidateJobs);
-  const scheduledJobs = candidateJobs.filter(
-    (j) => j.recipients.length === 1 || pendingByJob.get(j.id)?.has(phoneKey(jid)),
-  );
-
   const [draft, setDraft] = useState('');
-  // highlighted row in the "/" quick-reply picker (keyboard navigation)
-  const [qrActive, setQrActive] = useState(0);
   const [replyTo, setReplyTo] = useState<ChatMsg | null>(null);
   const [forwardMsg, setForwardMsg] = useState<ChatMsg | null>(null);
   const [recording, setRecording] = useState(false);
 
   // Tell teammates I'm in this chat (and typing) — collision avoidance.
-  usePresenceHeartbeat(canon, !!draft.trim() && !draft.startsWith('/'));
+  usePresenceHeartbeat(canon, !!draft.trim());
 
   // Our own presence, fire-and-forget: "typing…" while the draft changes
   // (throttled — WhatsApp shows it for a few seconds per signal), and
   // "recording…" refreshed for as long as the mic is open.
   const lastTypingSignal = useRef(0);
   useEffect(() => {
-    if (!draft || draft.startsWith('/')) return; // the quick-reply picker isn't typing
+    if (!draft) return;
     const now = Date.now();
     if (now - lastTypingSignal.current < 4000) return;
     lastTypingSignal.current = now;
@@ -474,7 +406,6 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
   const [sendError, setSendError] = useState('');
   const [menuOpen, setMenuOpen] = useState(false);
   const [cardOpen, setCardOpen] = useState(false);
-  const [blDialog, setBlDialog] = useState(false);
   // WhatsApp-style "select messages" mode: pick multiple bubbles, then copy
   // them as one block of "date/time - who: text" lines.
   const [selectMode, setSelectMode] = useState(false);
@@ -518,36 +449,8 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
     selectAnchorId.current = id;
   }
   const [blocked, setBlocked] = useState(false);
-  // is this contact on the send-time blacklist? (shared cache with Compose)
-  const blacklist = useQuery({
-    queryKey: ['blacklist'],
-    queryFn: api.blacklist.list,
-    staleTime: 60_000,
-    enabled: !conv.isGroup,
-  });
-  const blKey = conv.isGroup ? null : normalizePhone(displayConvNumber(conv));
-  const blacklisted = !!blKey && (blacklist.data ?? []).some((e) => e.phone_number === blKey);
-  const quickRepliesStore = useQuickReplies();
-  const quickReplies = quickRepliesStore.replies;
-  // null = closed; initialShortcut (possibly undefined) opens straight into the new-reply form
-  const [qrModal, setQrModal] = useState<{ initialShortcut?: string } | null>(null);
   const [attachFile, setAttachFile] = useState<File | null>(null);
-  // A quick reply's media, staged in the same preview the agent reviews before
-  // sending (carries the reply text as caption). base64 = uploaded file bytes;
-  // url = hosted media sent by reference.
-  const [attachQr, setAttachQr] = useState<{
-    mediatype: 'image' | 'video' | 'audio' | 'document';
-    mimetype: string;
-    filename: string;
-    caption: string;
-    base64?: string;
-    url?: string;
-    previewUrl: string;
-  } | null>(null);
-  const [showSchedule, setShowSchedule] = useState(false);
   const [showEmoji, setShowEmoji] = useState(false);
-  const [scheduleAt, setScheduleAt] = useState('');
-  const [notice, setNotice] = useState('');
   const [searchOpen, setSearchOpen] = useState(false);
   const [searchQ, setSearchQ] = useState('');
   const [searchIdx, setSearchIdx] = useState(0);
@@ -561,7 +464,6 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
   const bottomRef = useRef<HTMLDivElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const atBottomRef = useRef(true);
-  const scheduledRef = useRef<HTMLDivElement>(null);
   const markedRef = useRef<string>('');
   // Where to drop the caret after an emoji insert; null except for the render
   // right after insertEmoji, so the restore effect below is a no-op otherwise.
@@ -569,7 +471,7 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
 
   // Grow the composer with its content so multi-line messages stay fully
   // visible (WhatsApp-style), capped before it eats the thread; runs on every
-  // draft change so programmatic fills (quick replies, schedule pull-back) and
+  // draft change so programmatic fills and
   // the post-send reset to a single row both re-measure.
   useLayoutEffect(() => {
     const el = draftRef.current;
@@ -784,11 +686,6 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
     atBottomRef.current = true; // own sends land at the bottom, even reading history
     try {
       const res = await api.send(jid, item, conv.isGroup);
-      if (res.skipped || res.routed === 'skipped') {
-        setTempStatus(tempId, { status: 'SKIPPED' });
-        setSendError('Not sent — recipient is blocked/blacklisted or skipped.');
-        return;
-      }
       // capture the real Evolution id so reconciliation drops the temp by id
       if (res.messageId) {
         iSentRef.current.add(res.messageId);
@@ -898,90 +795,6 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
     }
   }
 
-  /** Pick a quick reply: insert its text, or stage its media for review+send. */
-  async function pickQuickReply(r: (typeof quickReplies)[number]) {
-    const filled = fillAgentName(r.text, me.data?.name || me.data?.email?.split('@')[0] || '');
-    if (!r.media) {
-      setDraft(filled);
-      return;
-    }
-    if (r.media.kind === 'url' && r.media.url) {
-      setDraft('');
-      setAttachQr({
-        mediatype: r.media.mediatype,
-        mimetype: r.media.mimetype,
-        filename: r.media.filename ?? '',
-        caption: filled,
-        url: r.media.url,
-        previewUrl: r.media.url,
-      });
-      return;
-    }
-    // Uploaded file: the bytes live server-side, fetched only now.
-    try {
-      const m = await api.quickReplies.media(r.id);
-      if (!m.base64) return setSendError('That quick reply has no media to send');
-      setDraft('');
-      setAttachQr({
-        mediatype: m.mediatype,
-        mimetype: m.mimetype,
-        filename: m.filename ?? '',
-        caption: filled,
-        base64: m.base64,
-        previewUrl: `data:${m.mimetype};base64,${m.base64}`,
-      });
-    } catch {
-      setSendError('Could not load the quick reply media');
-    }
-  }
-
-  /** Send the staged quick-reply media (audio → voice note, else a media item). */
-  function sendQrMedia(caption: string) {
-    const m = attachQr;
-    if (!m) return;
-    setSendError('');
-    setAttachQr(null);
-    const tempId = nextTmpId();
-    if (m.mediatype === 'audio') {
-      const item = { type: 'voice', data: m.base64 ? { base64: m.base64, encoding: true } : { url: m.url } };
-      setPending((p) => [
-        ...p,
-        buildOptimistic({
-          tmpId: tempId,
-          type: 'audio',
-          mimetype: m.mimetype,
-          hasMedia: true,
-          localPreviewUrl: m.previewUrl,
-          remoteJid: jid,
-          item,
-        }),
-      ]);
-      void dispatchSend(tempId, item);
-      return;
-    }
-    const data: Record<string, unknown> = { mimetype: m.mimetype, mediatype: m.mediatype, filename: m.filename };
-    if (m.base64) data.base64 = m.base64;
-    else data.url = m.url;
-    if (caption) data.caption = caption;
-    const item = { type: 'media', data };
-    const type: MsgType = m.mediatype === 'video' ? 'video' : m.mediatype === 'image' ? 'image' : 'document';
-    setPending((p) => [
-      ...p,
-      buildOptimistic({
-        tmpId: tempId,
-        type,
-        caption,
-        mimetype: m.mimetype,
-        fileName: m.filename,
-        hasMedia: true,
-        localPreviewUrl: m.previewUrl,
-        remoteJid: jid,
-        item,
-      }),
-    ]);
-    void dispatchSend(tempId, item);
-  }
-
   function retrySend(failed: ChatMsg) {
     const t = pending.find((p) => p.id === failed.id);
     if (!t) return;
@@ -998,107 +811,6 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
     if (!f) return;
     e.preventDefault();
     setAttachFile(f);
-  }
-
-  function toggleSchedule() {
-    if (!showSchedule && !scheduleAt) setScheduleAt(toLocalInput(new Date(Date.now() + 3600_000)));
-    setShowSchedule(!showSchedule);
-  }
-
-  // Schedule popover presets.
-  function presetIn1h() {
-    setScheduleAt(toLocalInput(new Date(Date.now() + 3600_000)));
-  }
-  function presetTonight() {
-    const d = new Date();
-    d.setHours(20, 0, 0, 0);
-    if (d.getTime() <= Date.now()) d.setDate(d.getDate() + 1);
-    setScheduleAt(toLocalInput(d));
-  }
-  function presetTomorrow9() {
-    const d = new Date();
-    d.setDate(d.getDate() + 1);
-    d.setHours(9, 0, 0, 0);
-    setScheduleAt(toLocalInput(d));
-  }
-
-  async function scheduleSend() {
-    const text = draft.trim();
-    if (!text) return setSendError('Type the message to schedule first');
-    const when = new Date(scheduleAt);
-    if (!scheduleAt || Number.isNaN(when.getTime()) || when.getTime() <= Date.now())
-      return setSendError('Pick a future date/time');
-    setSendError('');
-    try {
-      await api.jobs.save({
-        scheduledAt: when.toISOString(),
-        recipients: [{ id: jid, isGroup: conv.isGroup }],
-        items: [{ type: 'text', data: { text } }],
-      });
-      setDraft('');
-      setShowSchedule(false);
-      qc.invalidateQueries({ queryKey: ['jobs'] });
-      setNotice(`Scheduled for ${scheduleLabel(when.toISOString())}`);
-      window.setTimeout(() => setNotice(''), 6000);
-      toast('Message scheduled');
-    } catch (e) {
-      setSendError(String((e as Error).message));
-    }
-  }
-
-  const cancelJob = useMutation({
-    mutationFn: (id: string) => api.jobs.cancel(id),
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
-    onError: (e) => setSendError(String((e as Error).message)),
-  });
-
-  // Drop just this chat's number from a multi-recipient campaign — everyone
-  // else it's still going out to is untouched. The backend matches the
-  // recipient id exactly, so this sends the job's OWN stored id (bare
-  // digits, typically) rather than `jid` (always the full `...@s.whatsapp.net`
-  // form) — they're the same phone but rarely the same string.
-  const removeFromCampaign = useMutation({
-    mutationFn: (job: Job) => {
-      const recipientId = job.recipients.find((r) => phoneKey(r.id) === phoneKey(jid))?.id ?? jid;
-      return api.jobs.removeRecipient(job.id, recipientId);
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
-    onError: (e) => setSendError(String((e as Error).message)),
-  });
-
-  // Fire just this recipient's next owed item right now, bypassing the batch
-  // scheduler entirely — everyone else in the campaign is untouched. Same
-  // recipient-id resolution as removeFromCampaign, for the same reason.
-  const sendNowInCampaign = useMutation({
-    mutationFn: (vars: { job: Job; alsoRemove: boolean }) => {
-      const recipientId = vars.job.recipients.find((r) => phoneKey(r.id) === phoneKey(jid))?.id ?? jid;
-      return api.jobs.sendNow(vars.job.id, recipientId, vars.alsoRemove);
-    },
-    onSuccess: () => qc.invalidateQueries({ queryKey: ['jobs'] }),
-    onError: (e) => setSendError(String((e as Error).message)),
-  });
-
-  // Pull a scheduled job's text back into the composer, then drop the job.
-  function editScheduled(job: Job) {
-    const text = (job.items[0]?.data?.text ?? job.items[0]?.data?.caption) as string | undefined;
-    if (typeof text === 'string') setDraft(text);
-    setScheduleAt(toLocalInput(new Date(job.scheduledAt)));
-    cancelJob.mutate(job.id);
-  }
-
-  // Fire a scheduled job right now and remove it from the queue.
-  async function sendScheduledNow(job: Job) {
-    const item = job.items[0];
-    if (!item) return;
-    setSendError('');
-    try {
-      await api.send(jid, item, conv.isGroup);
-      await api.jobs.cancel(job.id);
-      qc.invalidateQueries({ queryKey: ['jobs'] });
-      void messages.refetch();
-    } catch (e) {
-      setSendError(String((e as Error).message));
-    }
   }
 
   async function toggleVoice() {
@@ -1331,25 +1043,6 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
     exitSelectMode();
   }
 
-  // quick replies: "/" at the start of the draft opens the picker
-  const qrQuery = draft.startsWith('/') ? draft.slice(1).toLowerCase() : null;
-  const qrMatches =
-    qrQuery != null
-      ? quickReplies.filter(
-          (r) =>
-            !qrQuery ||
-            r.shortcut.toLowerCase().includes(qrQuery) ||
-            r.text.toLowerCase().includes(qrQuery),
-        )
-      : [];
-  // the rows actually rendered (and reachable by the arrow keys)
-  const qrVisible = qrMatches.slice(0, 6);
-  // reset the highlight whenever the filtered set changes so it never points
-  // past the end (or at a stale row) after the query narrows
-  useEffect(() => {
-    setQrActive(0);
-  }, [qrQuery, qrVisible.length]);
-
   const presenceLabel =
     presence === 'composing' ? 'typing…' : presence === 'recording' ? 'recording voice…' : '';
 
@@ -1432,18 +1125,6 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
           </button>
           {menuOpen && (
             <div className="absolute right-0 z-20 mt-1 w-48 rounded-lg border border-gray-200 bg-white py-1 text-sm shadow-lg">
-              {scheduledJobs.length > 0 && (
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    scheduledRef.current?.scrollIntoView({ behavior: 'smooth' });
-                  }}
-                  className="flex w-full items-center gap-2 px-3 py-1.5 text-left font-medium text-amber-700 hover:bg-amber-50"
-                >
-                  <svg className="h-4 w-4 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                  {scheduledJobs.length} scheduled — jump
-                </button>
-              )}
               <button onClick={() => void markUnread()} className="block w-full px-3 py-1.5 text-left hover:bg-gray-50">
                 Mark as unread
               </button>
@@ -1459,18 +1140,6 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
               <button onClick={() => void onArchived()} className="block w-full px-3 py-1.5 text-left hover:bg-gray-50">
                 Archive chat
               </button>
-              {!conv.isGroup && (
-                <button
-                  onClick={() => {
-                    setMenuOpen(false);
-                    setBlDialog(true);
-                  }}
-                  title="Campaigns skip this number — this chat keeps working"
-                  className="block w-full px-3 py-1.5 text-left hover:bg-gray-50"
-                >
-                  {blacklisted ? '🚫 Blacklisted — edit reason' : 'Add to blacklist…'}
-                </button>
-              )}
               {!conv.isGroup && (
                 <button onClick={() => void toggleBlock()} className="block w-full px-3 py-1.5 text-left text-red-600 hover:bg-red-50">
                   {blocked ? 'Unblock contact' : 'Block contact'}
@@ -1489,25 +1158,13 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
           phone={displayConvNumber(conv)}
           messages={visible}
           blocked={blocked}
-          blacklisted={blacklisted}
           onSearch={() => {
             setSearchOpen(true);
             setSearchQ('');
           }}
           onArchive={() => void onArchived()}
           onToggleBlock={() => void toggleBlock()}
-          onBlacklist={() => setBlDialog(true)}
           onClose={() => setCardOpen(false)}
-        />
-      )}
-
-      {blDialog && !conv.isGroup && (
-        <BlacklistAddDialog
-          phone={displayConvNumber(conv)}
-          // a nameless contact is titled by its own number — don't echo that
-          // back as the blacklist row's name
-          name={conv.name.replace(/\D/g, '') === displayConvNumber(conv).replace(/\D/g, '') ? '' : conv.name}
-          onClose={() => setBlDialog(false)}
         />
       )}
 
@@ -1602,7 +1259,7 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
         }}
       >
         {messages.isLoading && <ThreadSkeleton />}
-        {!messages.isLoading && !visible.length && !scheduledJobs.length && (
+        {!messages.isLoading && !visible.length && (
           <div className="flex h-full flex-col items-center justify-center gap-1 text-sm text-gray-500">
             <span className="text-3xl" aria-hidden="true">
               👋
@@ -1718,110 +1375,6 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
           );
         })}
 
-        {scheduledJobs.length > 0 && (
-          <div ref={scheduledRef} className="space-y-1 pt-2">
-            <div className="flex items-center gap-2 px-1">
-              <div className="h-px flex-1 bg-amber-300/40" />
-              <span className="flex items-center gap-1 text-[11px] font-medium text-amber-700">
-                <svg className="h-3 w-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                Scheduled
-              </span>
-              <div className="h-px flex-1 bg-amber-300/40" />
-            </div>
-            {scheduledJobs.map((job) => {
-              const itemIndex = pendingByJob.get(job.id)?.get(phoneKey(jid)) ?? 0;
-              return (
-              <div key={job.id} className="flex justify-end">
-                <div className="max-w-[75%] rounded-xl rounded-br-sm border border-dashed border-amber-400 bg-amber-50/80 px-3 py-2">
-                  <div className="mb-0.5 flex items-center gap-1 text-[11px] font-medium text-amber-700">
-                    <svg className="h-3.5 w-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"/></svg>
-                    {scheduleLabel(job.scheduledAt)}
-                  </div>
-                  {/* A multi-item sequence (e.g. text then voice note) still
-                      owes this recipient every remaining item, not just the
-                      next one — list all of them, not only what's next. */}
-                  <div className="space-y-1.5">
-                    {job.items.slice(itemIndex).map((_, i) => (
-                      <div key={itemIndex + i}>
-                        {job.items.length > 1 && (
-                          <div className="text-[10px] font-medium text-amber-600">
-                            message {itemIndex + i + 1} of {job.items.length}
-                          </div>
-                        )}
-                        <div className="whitespace-pre-wrap break-words text-sm text-gray-800" dir="auto">
-                          {jobPreview(job, itemIndex + i)}
-                        </div>
-                      </div>
-                    ))}
-                  </div>
-                  <div className="mt-1.5 flex flex-wrap justify-end gap-1.5">
-                    {/* Edit/Send now/Cancel act on the WHOLE job — safe only
-                        when this chat is its one and only recipient. A
-                        multi-recipient campaign gets "Remove me" instead,
-                        which touches just this number. */}
-                    {job.recipients.length === 1 ? (
-                      <>
-                        <button
-                          onClick={() => editScheduled(job)}
-                          className="rounded border border-amber-300 px-2 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100"
-                        >
-                          Edit
-                        </button>
-                        <button
-                          onClick={() => void sendScheduledNow(job)}
-                          className="rounded border border-amber-300 px-2 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100"
-                        >
-                          Send now
-                        </button>
-                        <button
-                          onClick={() => cancelJob.mutate(job.id)}
-                          className="rounded border border-red-300 px-2 py-0.5 text-[11px] font-medium text-red-600 hover:bg-red-50"
-                        >
-                          Cancel
-                        </button>
-                      </>
-                    ) : (
-                      <>
-                        <button
-                          onClick={() => navigateTo({ job: job.id })}
-                          title="Open this campaign in History"
-                          className="rounded border border-gray-300 px-2 py-0.5 text-[11px] font-medium text-gray-600 hover:bg-gray-100"
-                        >
-                          View campaign
-                        </button>
-                        <button
-                          onClick={() => sendNowInCampaign.mutate({ job, alsoRemove: false })}
-                          disabled={sendNowInCampaign.isPending}
-                          title="Sends this recipient's next item right now, instead of waiting for the campaign to reach them"
-                          className="rounded border border-amber-300 px-2 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50"
-                        >
-                          Send now
-                        </button>
-                        <button
-                          onClick={() => sendNowInCampaign.mutate({ job, alsoRemove: true })}
-                          disabled={sendNowInCampaign.isPending}
-                          title="Sends this recipient's next item right now, then takes them off the campaign's remaining sends"
-                          className="rounded border border-amber-300 px-2 py-0.5 text-[11px] font-medium text-amber-700 hover:bg-amber-100 disabled:opacity-50"
-                        >
-                          Send &amp; remove
-                        </button>
-                        <button
-                          onClick={() => removeFromCampaign.mutate(job)}
-                          disabled={removeFromCampaign.isPending}
-                          title="Takes this number off the campaign's remaining sends — everyone else it's still going out to is untouched"
-                          className="rounded border border-red-300 px-2 py-0.5 text-[11px] font-medium text-red-600 hover:bg-red-50 disabled:opacity-50"
-                        >
-                          Remove number from this campaign
-                        </button>
-                      </>
-                    )}
-                  </div>
-                </div>
-              </div>
-              );
-            })}
-          </div>
-        )}
         <div ref={bottomRef} />
       </div>
 
@@ -1869,117 +1422,6 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
       {sendError && (
         <div role="alert" className="bg-red-50 px-3 py-1 text-xs text-red-600">
           {sendError}
-        </div>
-      )}
-      {notice && (
-        <div role="status" className="bg-green-50 px-3 py-1 text-xs text-wa-dark">
-          {notice}
-        </div>
-      )}
-
-      {showSchedule && (
-        <div className="border-t border-gray-200 bg-gray-50 px-3 py-2">
-          <div className="animate-rise mx-auto max-w-md rounded-xl border border-gray-200 bg-white p-3 shadow-sm">
-            <div className="mb-2 flex items-center justify-between">
-              <span className="text-sm font-medium text-gray-700">Schedule this message</span>
-              <button onClick={() => setShowSchedule(false)} className="text-gray-400 hover:text-gray-600">
-                ✕
-              </button>
-            </div>
-            <div className="mb-2 flex flex-wrap gap-1.5">
-              {(
-                [
-                  ['In 1 hour', presetIn1h],
-                  ['Tonight 20:00', presetTonight],
-                  ['Tomorrow 09:00', presetTomorrow9],
-                ] as const
-              ).map(([label, fn]) => (
-                <button
-                  key={label}
-                  onClick={fn}
-                  className="rounded-full bg-green-50 px-3 py-1 text-xs font-medium text-wa-dark hover:bg-green-100"
-                >
-                  {label}
-                </button>
-              ))}
-            </div>
-            <input
-              type="datetime-local"
-              value={scheduleAt}
-              onChange={(e) => setScheduleAt(e.target.value)}
-              className="mb-2 w-full rounded-md border border-gray-300 px-2 py-1.5 text-sm"
-            />
-            <div className="mb-2 truncate rounded-md bg-gray-50 px-2 py-1.5 text-xs text-gray-500" dir="auto">
-              {draft.trim() ? (
-                <>
-                  <span className="text-gray-400">Will send: </span>
-                  {draft.trim()}
-                </>
-              ) : (
-                <span className="text-gray-400">Type a message below to schedule it.</span>
-              )}
-            </div>
-            <div className="flex justify-end gap-2">
-              <button
-                onClick={() => setShowSchedule(false)}
-                className="rounded-md border border-gray-300 px-3 py-1.5 text-sm font-medium text-gray-600 hover:bg-gray-50"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={() => void scheduleSend()}
-                disabled={!draft.trim() || draft.startsWith('/')}
-                title={draft.trim() ? 'Schedule (fires server-side)' : 'Type the message below first'}
-                className="flex items-center gap-1.5 rounded-md bg-wa px-4 py-1.5 text-sm font-medium text-white hover:bg-wa-dark disabled:opacity-50"
-              >
-                <svg className="h-4 w-4" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                Schedule
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {qrQuery != null && (
-        <div className="border-t border-gray-200 bg-white px-3 py-1.5 text-sm">
-          <div className="mb-1 flex items-center justify-between text-xs text-gray-400">
-            <span>Quick replies</span>
-            <span className="flex items-center gap-3">
-              <button
-                onClick={() => setQrModal({ initialShortcut: qrQuery })}
-                className="font-medium text-wa-dark hover:underline"
-              >
-                + New
-              </button>
-              <button
-                onClick={() => setQrModal({})}
-                className="font-medium text-wa-dark hover:underline"
-              >
-                Manage
-              </button>
-            </span>
-          </div>
-          {!qrMatches.length && (
-            <div className="py-1 text-xs text-gray-400">No matches — “+ New” saves one</div>
-          )}
-          {qrVisible.map((r, i) => (
-            <button
-              key={r.shortcut}
-              // {{agent_name}} fills at insertion so the final text is visible
-              // in the composer before sending; media replies stage for review
-              onClick={() => void pickQuickReply(r)}
-              onMouseEnter={() => setQrActive(i)}
-              className={`flex w-full min-w-0 items-baseline gap-2 rounded px-2 py-1 text-left hover:bg-green-50 ${
-                i === qrActive ? 'bg-green-50' : ''
-              }`}
-            >
-              <span className="shrink-0 font-mono text-xs text-wa-dark">/{r.shortcut}</span>
-              {r.media && <span className="shrink-0 text-xs" title={`${r.media.mediatype} attached`}>📎</span>}
-              <span className="truncate text-xs text-gray-500" dir="auto">
-                {r.text || `[${r.media?.mediatype ?? 'media'}]`}
-              </span>
-            </button>
-          ))}
         </div>
       )}
 
@@ -2056,34 +1498,13 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
           onChange={(e) => setDraft(e.target.value)}
           onKeyDown={(e) => {
             if (e.key === 'Escape' && replyTo) setReplyTo(null);
-            // Quick-reply picker open: arrows move the highlight, Enter picks
-            // the highlighted row (and Tab does too). Take these keys over
-            // before the send/newline handling below.
-            if (qrQuery != null && qrVisible.length) {
-              if (e.key === 'ArrowDown') {
-                e.preventDefault();
-                setQrActive((i) => (i + 1) % qrVisible.length);
-                return;
-              }
-              if (e.key === 'ArrowUp') {
-                e.preventDefault();
-                setQrActive((i) => (i - 1 + qrVisible.length) % qrVisible.length);
-                return;
-              }
-              if ((e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) || e.key === 'Tab') {
-                e.preventDefault();
-                const r = qrVisible[qrActive] ?? qrVisible[0];
-                if (r) void pickQuickReply(r);
-                return;
-              }
-            }
             // WhatsApp-style: Enter sends, Shift+Enter inserts a newline.
             // Mirror the send button's guard so Enter never fires a blank
-            // message or a half-typed "/" quick-reply query. isComposing
+            // message. isComposing
             // skips Enter that's only committing an IME candidate.
             if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
               e.preventDefault();
-              if (!recording && draft.trim() && !draft.startsWith('/')) sendText();
+              if (!recording && draft.trim()) sendText();
             }
           }}
           onPaste={(e) => {
@@ -2127,21 +1548,8 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
           </button>
         )}
         <button
-          type="button"
-          onClick={toggleSchedule}
-          disabled={recording}
-          title="Schedule send…"
-          aria-label="Schedule send"
-          aria-expanded={showSchedule}
-          className={`flex h-10 w-10 shrink-0 items-center justify-center rounded-full disabled:opacity-50 ${
-            showSchedule ? 'bg-green-100 text-wa-dark' : 'text-gray-500 hover:bg-gray-100'
-          }`}
-        >
-          <svg className="h-5 w-5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-        </button>
-        <button
           type="submit"
-          disabled={recording || !draft.trim() || draft.startsWith('/')}
+          disabled={recording || !draft.trim()}
           title="Send"
           aria-label="Send message"
           className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-wa text-white hover:bg-wa-dark disabled:opacity-50"
@@ -2159,16 +1567,6 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
         />
       )}
 
-      {attachQr && (
-        <AttachPreview
-          media={{ name: attachQr.filename || attachQr.mediatype, mime: attachQr.mimetype, previewUrl: attachQr.previewUrl }}
-          initialCaption={attachQr.caption}
-          sending={false}
-          onCancel={() => setAttachQr(null)}
-          onSend={(caption) => sendQrMedia(caption)}
-        />
-      )}
-
       {forwardMsg && (
         <ForwardModal
           msg={forwardMsg}
@@ -2178,13 +1576,6 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
         />
       )}
 
-      {qrModal && (
-        <QuickRepliesModal
-          store={quickRepliesStore}
-          onClose={() => setQrModal(null)}
-          initialShortcut={qrModal.initialShortcut}
-        />
-      )}
     </div>
   );
 }
@@ -2226,36 +1617,6 @@ export default function ChatPage({ onThreadOpenChange, openChat, onChatOpened }:
     () => new Set((remindersQ.data ?? []).filter((r) => r.status === 'fired').map((r) => r.chatJid)),
     [remindersQ.data],
   );
-  // Shares the ['jobs'] cache with Thread's own scheduled-jobs query — same
-  // filter (isOngoingForChat), just fanned out across every recipient
-  // instead of one open chat, for the list row's scheduled indicator.
-  const jobsQ = useQuery({ queryKey: ['jobs'], queryFn: api.jobs.list, refetchInterval: 30_000 });
-  const ongoingJobs = useMemo(() => (jobsQ.data ?? []).filter(isOngoingForChat), [jobsQ.data]);
-  // A multi-recipient campaign can be mid-run with SOME of its recipients
-  // already sent to while the job stays pending/paused for the rest —
-  // job-level "ongoing" alone would keep flagging those rows too.
-  const pendingByJob = usePendingRecipientKeys(ongoingJobs);
-  // Keyed by phoneKey (bare digits), not the raw id — same mismatch as
-  // Thread's own query: a mass-imported campaign's recipients are bare
-  // phone strings, while a chat row's id is the full jid.
-  const scheduledByJid = useMemo(() => {
-    const map = new Map<string, { count: number; nextAt: string }>();
-    for (const j of ongoingJobs) {
-      const pendingSet = j.recipients.length > 1 ? pendingByJob.get(j.id) : null;
-      for (const r of j.recipients) {
-        const key = phoneKey(r.id);
-        if (pendingSet && !pendingSet.has(key)) continue; // this one already got it
-        const prev = map.get(key);
-        if (prev) {
-          prev.count += 1;
-          if (j.scheduledAt < prev.nextAt) prev.nextAt = j.scheduledAt;
-        } else {
-          map.set(key, { count: 1, nextAt: j.scheduledAt });
-        }
-      }
-    }
-    return map;
-  }, [ongoingJobs, pendingByJob]);
   const [activeJid, setActiveJid] = useState<string | null>(null);
   useEffect(() => {
     onThreadOpenChange?.(!!activeJid);
@@ -2280,7 +1641,6 @@ export default function ChatPage({ onThreadOpenChange, openChat, onChatOpened }:
   // long-press (mobile). Pinned to the pointer; `longPressed` suppresses the
   // tap that would otherwise open the chat right after a long-press.
   const [rowMenu, setRowMenu] = useState<{ conv: Conv; x: number; y: number } | null>(null);
-  const [rowBlDialog, setRowBlDialog] = useState<Conv | null>(null);
   const longPressTimer = useRef<number | null>(null);
   const longPressed = useRef(false);
   const longPressStart = useRef<{ x: number; y: number } | null>(null);
@@ -2424,7 +1784,6 @@ export default function ChatPage({ onThreadOpenChange, openChat, onChatOpened }:
       if (archived.has(c.id)) return false;
       if (tab === 'unread' && !c.unreadCount) return false;
       if (tab === 'groups' && !c.isGroup) return false;
-      if (tab === 'scheduled' && !scheduledByJid.has(phoneKey(c.id))) return false;
       if (WORKBENCH_FILTERS.includes(tab)) {
         const m = rowMeta(c);
         if (tab === 'mine' && (!me.data?.email || m.assignee !== me.data.email)) return false;
@@ -2522,7 +1881,6 @@ export default function ChatPage({ onThreadOpenChange, openChat, onChatOpened }:
           {list.map((c) => {
             const wm = rowMeta(c);
             const assignedAgent = wm.assignee ? agentsByEmail.get(wm.assignee) : undefined;
-            const sched = scheduledByJid.get(phoneKey(c.id));
             return (
             // content-visibility lets the browser skip layout/paint for the
             // ~1000 off-screen rows of a real account's chat list
@@ -2621,20 +1979,6 @@ export default function ChatPage({ onThreadOpenChange, openChat, onChatOpened }:
                           <path d="M16 3a1 1 0 01.707 1.707L16 5.414V10l2.293 2.293A1 1 0 0117.586 14H13v6l-1 2-1-2v-6H6.414a1 1 0 01-.707-1.707L8 10V5.414l-.707-.707A1 1 0 018 3h8z" />
                         </svg>
                       )}
-                      {sched && (
-                        <svg
-                          className="h-3.5 w-3.5 text-amber-400"
-                          fill="none"
-                          stroke="currentColor"
-                          strokeWidth={2}
-                          viewBox="0 0 24 24"
-                          role="img"
-                        >
-                          <title>{`${sched.count} scheduled — next ${scheduleLabel(sched.nextAt)}`}</title>
-                          <circle cx="12" cy="12" r="9" />
-                          <path strokeLinecap="round" strokeLinejoin="round" d="M12 7v5l3 3" />
-                        </svg>
-                      )}
                       <span
                         className={`text-xs ${c.unreadCount ? 'font-semibold text-wa-dark' : 'text-gray-400'}`}
                       >
@@ -2669,23 +2013,7 @@ export default function ChatPage({ onThreadOpenChange, openChat, onChatOpened }:
                           {c.unreadCount > 99 ? '99+' : c.unreadCount}
                         </span>
                       )
-                    ) : (
-                      sched && (
-                        <span
-                          className="flex shrink-0 items-center gap-1 rounded-full border border-dashed border-amber-300 bg-amber-50 px-1.5 py-0.5 text-[10px] font-semibold text-amber-700"
-                          title={`${sched.count} scheduled message${sched.count > 1 ? 's' : ''}`}
-                        >
-                          <svg className="h-2.5 w-2.5" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24">
-                            <path
-                              strokeLinecap="round"
-                              strokeLinejoin="round"
-                              d="M8 7V3m8 4V3m-9 8h10M5 21h14a2 2 0 002-2V7a2 2 0 00-2-2H5a2 2 0 00-2 2v12a2 2 0 002 2z"
-                            />
-                          </svg>
-                          {scheduleLabel(sched.nextAt)}
-                        </span>
-                      )
-                    )}
+                    ) : null}
                   </div>
                 </div>
               </button>
@@ -2752,32 +2080,8 @@ export default function ChatPage({ onThreadOpenChange, openChat, onChatOpened }:
                 Archive chat
               </button>
             )}
-            {!rowMenu.conv.isGroup && (
-              <button
-                onClick={() => {
-                  const c = rowMenu.conv;
-                  setRowMenu(null);
-                  setRowBlDialog(c);
-                }}
-                title="Campaigns skip this number — this chat keeps working"
-                className="block w-full px-3 py-1.5 text-left hover:bg-gray-50"
-              >
-                Add to blacklist…
-              </button>
-            )}
           </div>
         </>
-      )}
-      {rowBlDialog && (
-        <BlacklistAddDialog
-          phone={displayConvNumber(rowBlDialog)}
-          name={
-            rowBlDialog.name.replace(/\D/g, '') === displayConvNumber(rowBlDialog).replace(/\D/g, '')
-              ? ''
-              : rowBlDialog.name
-          }
-          onClose={() => setRowBlDialog(null)}
-        />
       )}
       {active ? (
         <Thread

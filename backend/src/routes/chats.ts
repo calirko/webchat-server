@@ -94,13 +94,6 @@ export function registerChats(app: FastifyInstance, deps: ChatsDeps): void {
     return { ok: true, jid, tags };
   });
 
-  // Recipients carrying a tag — Compose's "add by tag" audience.
-  app.get('/api/chats/by-tag', async (req, reply) => {
-    const tag = String((req.query as { tag?: string }).tag ?? '').trim();
-    if (!tag) return reply.code(400).send({ error: 'tag required' });
-    return { tag, jids: meta.chatsWithTag(tag) };
-  });
-
   // ---- internal notes (never enter any send path) ------------------------
 
   app.get('/api/chats/notes', async (req, reply) => {

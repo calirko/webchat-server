@@ -9,7 +9,7 @@ import type { ChatMsg, MsgType } from './chatModel';
  * merged into the rendered records, then dropped once the real row arrives.
  */
 export interface PendingSend extends ChatMsg {
-  /** the JobItem we sent — kept so a FAILED temp can be retried verbatim */
+  /** the MessageItem we sent — kept so a FAILED temp can be retried verbatim */
   item: { type: string; data: Record<string, unknown> };
   /** Evolution message id, captured from /api/send once it returns 'evo' */
   serverId?: string;

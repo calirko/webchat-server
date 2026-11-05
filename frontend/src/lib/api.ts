@@ -1,57 +1,21 @@
 import type {
   Agent,
-  AgentInsightsRow,
   AgentRole,
-  AiAuditRow,
-  AiModelTier,
-  AiProviderName,
-  AiTestResult,
-  AnalyticsSummary,
-  BlacklistEntry,
-  CampaignProgress,
   ChatMeta,
   ChatNote,
   ChatWorkStatus,
   CleanupResult,
   EvoChat,
   InstanceInfo,
-  Job,
-  JobItem,
-  JobPage,
-  JobScope,
-  JobSend,
-  JobStatus,
-  JobVolumeDay,
-  KnowledgeArticle,
-  ListMember,
-  ListRecipe,
   MaintenanceReport,
   Me,
   MessageAgents,
+  MessageItem,
   Perms,
-  QuickReplyMediaInput,
-  Recipient,
-  RecipientList,
   Reminder,
-  ResolvedQuickReplyMedia,
   SendResult,
-  SendStatus,
-  ServerQuickReply,
-  StudioOffering,
-  VerificationPage,
-  VerificationSweep,
-  VerifyStatus,
 } from '../types';
-import { getActiveInstance, withInstance } from './instance';
-
-/** Insights window: a day preset, or an explicit YYYY-MM-DD from/to range. */
-export type AnalyticsRange = { days: number } | { from: string; to: string };
-
-function rangeQuery(range: AnalyticsRange): string {
-  return 'days' in range
-    ? `days=${range.days}`
-    : `from=${encodeURIComponent(range.from)}&to=${encodeURIComponent(range.to)}`;
-}
+import { withInstance } from './instance';
 
 const DEFAULT_TIMEOUT_MS = 25_000;
 
@@ -113,9 +77,8 @@ const put = <T,>(path: string, body: unknown) =>
 const del = <T,>(path: string) => http<T>(path, { method: 'DELETE' });
 
 // Endpoints scoped to the ACTIVE instance (header switcher) append `?instance=`:
-// Evolution-backed calls plus the per-instance-separated surfaces — jobs
-// (schedule/history), quick replies and analytics/insights. The rest (lists,
-// blacklist, chat-meta, reminders, agents) stays instance-free.
+// the Evolution-backed calls. The rest (chat-meta, reminders, agents) stays
+// instance-free.
 const iget = <T,>(path: string) => http<T>(withInstance(path));
 const ipost = <T,>(path: string, body?: unknown, opts?: { timeoutMs?: number }) =>
   http<T>(withInstance(path), { method: 'POST', body: JSON.stringify(body ?? {}), ...opts });
@@ -130,178 +93,31 @@ export interface ServerSettings {
   instanceLocked?: boolean;
   apikeySet: boolean;
   apikeyHint: string;
-  delayMin: number;
-  delayMax: number;
-  /** Zone the server reads every 'HH:MM' in (quiet hours, sending windows). */
+  /** The zone the server reads 'HH:MM' values in, plus its clock. */
   timezone: string;
   serverTime: string;
-  recurringEnabled: boolean;
-  quietEnabled: boolean;
-  quietStart: string;
-  quietEnd: string;
-  optoutEnabled: boolean;
-  optoutKeywords: string;
-  optoutReply: string;
   agentsEnabled: boolean;
-  approvalThreshold: number;
   retentionDays: number;
-  verifyEnabled: boolean;
-  verifyValidDays: number;
-  verifyInvalidDays: number;
-  /** Background number check — how hard it may lean on Evolution. */
-  verifyDailyCap: number;
-  verifyBatchSize: number;
-  verifyBatchPauseMs: number;
-  verifyBreakerRun: number;
-  /** Cold-contact ration: first contact per rolling 24h, with a warm-up ramp. */
-  coldCapEnabled: boolean;
-  coldDailyCap: number;
-  coldWarmupStart: number;
-  /** Rolling window the ramp counts active days over; also the cold-send retention. */
-  coldRampWindowDays: number;
-  /** Evolution lines that fire push notifications; [] = default line only. */
+  /** Evolution lines whose incoming messages notify ([] = none). */
   notifyInstances: string[];
-  /**
-   * AI agent for inbound leads. `aiAgentEnabled` plus a non-empty
-   * `aiAgentInstances` are the two things that let it answer anyone at all —
-   * both default off/empty and nothing is implicit.
-   */
-  aiAgentEnabled: boolean;
-  aiAgentInstances: string[];
-  aiAgentProvider: AiProviderName;
-  aiAgentModelTier: AiModelTier;
-  aiAgentModel: string;
-  /** The key itself never leaves the server — only these two. */
-  aiAgentApiKeySet: boolean;
-  aiAgentApiKeyHint: string;
-  aiAgentPersona: string;
-  aiAgentRules: string;
-  aiAgentEscalation: string;
-  aiAgentMaxRepliesPerSession: number;
-  aiAgentSessionGapHours: number;
-  aiAgentDailyCap: number;
-  aiAgentHandoffMessage: string;
-  aiAgentReplyDelaySec: number;
-  /** Read-only: the fixed rules the operator's own instructions sit on top of. */
-  aiAgentSafetyRules: string;
-  /** The model the current provider/tier resolves to. */
-  aiAgentResolvedModel: string;
-}
-
-export interface KnowledgeInput {
-  title: string;
-  content: string;
-  category?: string;
-  keywords?: string;
-  active?: boolean;
-}
-
-export interface OfferingInput {
-  title?: string;
-  branch?: string;
-  ageGroup?: string;
-  level?: string;
-  dayOfWeek?: string;
-  time?: string;
-  price?: string;
-  spotsLeft?: number | null;
-  isOffer?: boolean;
-  notes?: string;
-  active?: boolean;
-  validUntil?: string | null;
-}
-
-/** Today's first-contact ration for one line, and how much of it is left. */
-export interface SendingLimits {
-  instance: string;
-  coldContacts: {
-    spent: number;
-    cap: number;
-    /** null = capping is off (JSON has no Infinity). */
-    remaining: number | null;
-    activeDays: number;
-    enabled: boolean;
-    warmupStart: number;
-    dailyCap: number;
-  };
-  knownContacts: number;
-  verification: {
-    enabled: boolean;
-    batchSize: number;
-    batchPauseMs: number;
-    dailyCap: number;
-  };
-}
-
-/** How a candidate recipient list splits by familiarity, before send. */
-export interface RecipientClassification {
-  instance: string;
-  known: number;
-  cold: number;
-  groups: number;
-}
-
-/** Which candidate recipient ids this line already sent to within N days. */
-export interface RecentContactCheck {
-  instance: string;
-  days: number;
-  recent: string[];
-}
-
-/** Everyone this line actually sent to within N days, as ready-to-save list members. */
-export interface RecentContactRoster {
-  instance: string;
-  days: number;
-  members: ListMember[];
 }
 
 export type SettingsPatch = Partial<
-  Omit<
-    ServerSettings,
-    | 'apikeySet'
-    | 'apikeyHint'
-    | 'timezone'
-    | 'serverTime'
-    | 'aiAgentApiKeySet'
-    | 'aiAgentApiKeyHint'
-    | 'aiAgentSafetyRules'
-    | 'aiAgentResolvedModel'
-  > & { apikey: string; aiAgentApiKey: string }
+  Omit<ServerSettings, 'apikeySet' | 'apikeyHint' | 'timezone' | 'serverTime'> & { apikey: string }
 >;
 
 /** Per-person notification preferences (each agent sets their own). */
 export interface NotifyPrefs {
   groups: boolean;
   dms: boolean;
-  jobsEnded: boolean;
-  jobsFailuresOnly: boolean;
   quietEnabled: boolean;
   quietStart: string;
   quietEnd: string;
   keywords: string;
 }
 
-/** Per-person nav tab order (main bar vs. "More"), each agent sets their own. */
-export interface ToolbarPrefs {
-  order: string[];
-}
-
 export const api = {
   health: () => get<{ ok: boolean; mode: string; version: string }>('/api/health'),
-
-  // Per-line, so the header switcher's channel is the one being reported on.
-  sendingLimits: () => iget<SendingLimits>('/api/sending-limits'),
-  classifyRecipients: (recipients: Recipient[]) =>
-    ipost<RecipientClassification>('/api/sending-limits/classify', {
-      recipients: recipients.map((r) => r.id),
-    }),
-  recentContact: (recipients: Recipient[], days: number) =>
-    ipost<RecentContactCheck>('/api/sending-limits/recency', {
-      recipients: recipients.map((r) => r.id),
-      days,
-    }),
-  recentContactRoster: (days: number) =>
-    ipost<RecentContactRoster>('/api/sending-limits/recent-roster', { days }),
 
   settings: {
     get: () => get<ServerSettings>('/api/settings'),
@@ -318,187 +134,12 @@ export const api = {
     save: (patch: Partial<NotifyPrefs>) => put<NotifyPrefs>('/api/notify-prefs', patch),
   },
 
-  toolbarPrefs: {
-    get: () => get<ToolbarPrefs>('/api/toolbar-prefs'),
-    save: (order: string[]) => put<ToolbarPrefs>('/api/toolbar-prefs', { order }),
-  },
-
   push: {
     // endpoint targets this device exactly; the server falls back to the
     // caller's identity when it's absent.
     test: (endpoint?: string) =>
       post<{ sent: number }>('/api/push/test', endpoint ? { endpoint } : {}),
   },
-
-  jobs: {
-    list: () => iget<Job[]>('/api/jobs'),
-    page: (
-      scope: JobScope,
-      opts: {
-        status?: JobStatus | 'active';
-        limit?: number;
-        offset?: number;
-        q?: string;
-        sort?: 'asc' | 'desc';
-      } = {},
-    ) => {
-      const q = new URLSearchParams({ scope, limit: String(opts.limit ?? 50), offset: String(opts.offset ?? 0) });
-      if (opts.status) q.set('status', opts.status);
-      if (opts.q?.trim()) q.set('q', opts.q.trim());
-      if (opts.sort) q.set('sort', opts.sort);
-      return iget<JobPage>(`/api/jobs?${q}`);
-    },
-    // Job counts per day (History) for the volume-strip navigation aid.
-    // tz: minutes to add to UTC to reach the browser's local time, so "day"
-    // matches the same local day the list itself groups by.
-    volume: (days = 30) => {
-      const tz = -new Date().getTimezoneOffset();
-      return iget<JobVolumeDay[]>(`/api/jobs/volume?scope=history&days=${days}&tz=${tz}`);
-    },
-    get: (id: string) => get<Job>(`/api/jobs/${encodeURIComponent(id)}`),
-    // New jobs are pinned to the active instance; edits keep the job's own
-    // (the server preserves a stored instance when the field is absent).
-    save: (job: Partial<Job> & Pick<Job, 'scheduledAt' | 'recipients' | 'items'>) =>
-      post<Job>('/api/jobs', job.id || !getActiveInstance() ? job : { ...job, instance: getActiveInstance() }),
-    sends: (id: string) => get<JobSend[]>(`/api/jobs/${encodeURIComponent(id)}/sends`),
-    // One page of the ledger, filtered server-side — the campaign panel's view
-    // of a job whose ledger is thousands of rows long.
-    sendsPage: (
-      id: string,
-      opts: { status?: SendStatus; q?: string; limit?: number; offset?: number } = {},
-    ) => {
-      const q = new URLSearchParams({
-        limit: String(opts.limit ?? 100),
-        offset: String(opts.offset ?? 0),
-      });
-      if (opts.status) q.set('status', opts.status);
-      if (opts.q?.trim()) q.set('q', opts.q.trim());
-      return get<{ sends: JobSend[]; total: number }>(
-        `/api/jobs/${encodeURIComponent(id)}/sends/page?${q}`,
-      );
-    },
-    progress: (id: string) =>
-      get<CampaignProgress>(`/api/jobs/${encodeURIComponent(id)}/progress`),
-    pause: (id: string) => post<Job>(`/api/jobs/${encodeURIComponent(id)}/pause`),
-    retryFailed: (id: string) =>
-      post<{ retried: number; job: Job }>(`/api/jobs/${encodeURIComponent(id)}/retry-failed`),
-    resume: (id: string) => post<Job>(`/api/jobs/${encodeURIComponent(id)}/resume`),
-    // Force the within-batch count back to 0 — for a batch pacing count left
-    // stale by a backend restart mid-campaign (a deploy).
-    resetBatch: (id: string) => post<Job>(`/api/jobs/${encodeURIComponent(id)}/reset-batch`),
-    // Drop one number from a job's remaining work — "remove me from this
-    // campaign" from that contact's own chat. Sent rows are untouched.
-    removeRecipient: (id: string, recipient: string) =>
-      post<Job>(`/api/jobs/${encodeURIComponent(id)}/remove-recipient`, { recipient }),
-    // Fire just this recipient's next owed item right now, bypassing the batch
-    // scheduler — the chat-side "Send now" / "Send & remove" buttons.
-    sendNow: (id: string, recipient: string, alsoRemove?: boolean) =>
-      post<Job>(`/api/jobs/${encodeURIComponent(id)}/send-now`, { recipient, alsoRemove }),
-    cancel: (id: string) => post<Job>(`/api/jobs/${encodeURIComponent(id)}/cancel`),
-    restore: (id: string) => post<Job>(`/api/jobs/${encodeURIComponent(id)}/restore`),
-    rerun: (id: string) => post<Job>(`/api/jobs/${encodeURIComponent(id)}/rerun`),
-    approve: (id: string) => post<Job>(`/api/jobs/${encodeURIComponent(id)}/approve`),
-    reject: (id: string, reason?: string) =>
-      post<Job>(`/api/jobs/${encodeURIComponent(id)}/reject`, { reason }),
-    // carries the ledger table's filter, so the download is what is on screen
-    ledgerCsvUrl: (id: string, opts: { status?: SendStatus; q?: string } = {}) => {
-      const q = new URLSearchParams();
-      if (opts.status) q.set('status', opts.status);
-      if (opts.q?.trim()) q.set('q', opts.q.trim());
-      const qs = q.toString();
-      return `/api/jobs/${encodeURIComponent(id)}/ledger.csv${qs ? `?${qs}` : ''}`;
-    },
-    /** Save the failed + not-yet-sent recipients as a list, to send to later. */
-    unsentList: (id: string, name?: string) =>
-      post<{ list: RecipientList; members: number; invalid: string[] }>(
-        `/api/jobs/${encodeURIComponent(id)}/unsent-list`,
-        name ? { name } : {},
-      ),
-    // The recipients behind one ledger status chip, names filled in — feeds
-    // "open Compose to just these" straight from the ledger.
-    recipientsByStatus: (id: string, status: SendStatus) =>
-      get<{ recipients: Recipient[] }>(
-        `/api/jobs/${encodeURIComponent(id)}/recipients?status=${status}`,
-      ),
-    /** The "create as a list" counterpart — same status chip, saved instead of composed. */
-    statusList: (id: string, status: SendStatus, name?: string) =>
-      post<{ list: RecipientList; members: number; invalid: string[] }>(
-        `/api/jobs/${encodeURIComponent(id)}/status-list`,
-        name ? { status, name } : { status },
-      ),
-    remove: (id: string) => del<{ ok: boolean }>(`/api/jobs/${encodeURIComponent(id)}`),
-    clearDone: (scope?: JobScope) =>
-      post<{ ok: boolean; removed: number }>('/api/jobs/clear-done', scope ? { scope } : {}),
-    bulkDelete: (ids: string[]) =>
-      post<{ ok: boolean; removed: number }>('/api/jobs/bulk-delete', { ids }),
-  },
-
-  // Lists are per-line: list filters by the active line, and a new list (with
-  // no explicit lineScope) is pinned to it. Admins can pull every line's
-  // roster with listAll(), the management view.
-  lists: {
-    list: () => iget<RecipientList[]>('/api/lists'),
-    listAll: () => get<RecipientList[]>('/api/lists?scope=all'),
-    get: (id: string) =>
-      get<RecipientList & { members: ListMember[] }>(`/api/lists/${encodeURIComponent(id)}`),
-    // `recipe` rides along with the members it produced (null = a plain list).
-    // `lineScope`: omit to default to the active line; null = every line.
-    create: (
-      name: string,
-      members: Array<Partial<ListMember>> = [],
-      recipe: ListRecipe | null = null,
-      lineScope?: string[] | null,
-    ) =>
-      ipost<RecipientList & { members: number; invalid: string[] }>('/api/lists', {
-        name,
-        members,
-        recipe,
-        ...(lineScope !== undefined ? { lineScope } : {}),
-      }),
-    update: (
-      id: string,
-      patch: {
-        name?: string;
-        members?: Array<Partial<ListMember>>;
-        recipe?: ListRecipe | null;
-        lineScope?: string[] | null;
-      },
-    ) =>
-      iput<RecipientList & { members: number; invalid: string[] }>(
-        `/api/lists/${encodeURIComponent(id)}`,
-        patch,
-      ),
-    remove: (id: string) => del<{ ok: boolean }>(`/api/lists/${encodeURIComponent(id)}`),
-  },
-
-  // Quick replies are per-instance: list filters by the active line, and a new
-  // reply (single or bulk import) is pinned to it. Update/delete are id-scoped.
-  quickReplies: {
-    list: () => iget<ServerQuickReply[]>('/api/quick-replies'),
-    // Admin manage view: every instance + every owner, no instance filter.
-    // The server falls back to the scoped roster without agents.manage.
-    listAll: () => get<ServerQuickReply[]>('/api/quick-replies?scope=all'),
-    create: (shortcut: string, text: string, personal = false, media?: QuickReplyMediaInput | null) =>
-      ipost<ServerQuickReply>('/api/quick-replies', { shortcut, text, personal, media }),
-    importMany: (rows: Array<{ shortcut: string; text: string }>) =>
-      ipost<{ ok: boolean; added: number }>('/api/quick-replies', { rows }),
-    // media: omit to leave unchanged, null to clear, a value to replace.
-    update: (
-      id: number,
-      patch: { shortcut?: string; text?: string; media?: QuickReplyMediaInput | null },
-    ) => put<ServerQuickReply>(`/api/quick-replies/${id}`, patch),
-    // The sendable bytes/URL — fetched only when staging a media reply to send.
-    media: (id: number) => get<ResolvedQuickReplyMedia>(`/api/quick-replies/${id}/media`),
-    remove: (id: number) => del<{ ok: boolean }>(`/api/quick-replies/${id}`),
-  },
-
-  // Insights are per-instance (header switcher); withInstance() appends ?instance=.
-  analytics: (range: AnalyticsRange = { days: 30 }) =>
-    iget<AnalyticsSummary>(`/api/analytics/summary?${rangeQuery(range)}`),
-  agentInsights: (range: AnalyticsRange = { days: 30 }) =>
-    iget<{ days: number; agents: AgentInsightsRow[] }>(`/api/analytics/agents?${rangeQuery(range)}`),
-  analyticsCsvUrl: (range: AnalyticsRange = { days: 30 }) =>
-    withInstance(`/api/analytics/export.csv?${rangeQuery(range)}`),
 
   me: () => get<Me>('/api/me'),
 
@@ -545,51 +186,9 @@ export const api = {
       post<{ ok: boolean; jid: string }>('/api/chats/status', { jid, status }),
     setTags: (jid: string, tags: string[]) =>
       post<{ ok: boolean; jid: string; tags: string[] }>('/api/chats/tags', { jid, tags }),
-    byTag: (tag: string) => get<{ tag: string; jids: string[] }>(`/api/chats/by-tag?tag=${encodeURIComponent(tag)}`),
     notes: (jid: string) => get<ChatNote[]>(`/api/chats/notes?jid=${encodeURIComponent(jid)}`),
     addNote: (jid: string, body: string) => post<ChatNote>('/api/chats/notes', { jid, body }),
     removeNote: (id: number) => del<{ ok: boolean }>(`/api/chats/notes/${id}`),
-    /**
-     * Claim the chat AND pause the AI in one request — never two, or a partial
-     * failure leaves the AI free to answer over the human who just stepped in.
-     */
-    takeOver: (jid: string) =>
-      post<{ ok: boolean; jid: string; agentEmail: string; aiState: string }>(
-        '/api/chats/take-over',
-        { jid },
-      ),
-    /** 409s while a human still owns the chat. */
-    resumeAi: (jid: string) =>
-      post<{ ok: boolean; jid: string; aiState: string }>('/api/chats/resume-ai', { jid }),
-  },
-
-  aiAgent: {
-    knowledge: {
-      list: () => get<KnowledgeArticle[]>('/api/ai-agent/knowledge'),
-      create: (input: KnowledgeInput) => post<KnowledgeArticle>('/api/ai-agent/knowledge', input),
-      update: (id: number, patch: Partial<KnowledgeInput>) =>
-        put<KnowledgeArticle>(`/api/ai-agent/knowledge/${id}`, patch),
-      remove: (id: number) => del<{ ok: boolean }>(`/api/ai-agent/knowledge/${id}`),
-    },
-    offerings: {
-      list: () => get<StudioOffering[]>('/api/ai-agent/offerings'),
-      create: (input: OfferingInput) => post<StudioOffering>('/api/ai-agent/offerings', input),
-      update: (id: number, patch: OfferingInput) =>
-        put<StudioOffering>(`/api/ai-agent/offerings/${id}`, patch),
-      /** The ONE action that stamps availability freshness. */
-      recheck: (id: number, spotsLeft: number | null) =>
-        post<StudioOffering>(`/api/ai-agent/offerings/${id}/recheck`, { spotsLeft }),
-      remove: (id: number) => del<{ ok: boolean }>(`/api/ai-agent/offerings/${id}`),
-    },
-    // Stateless: `history` carries the whole sandbox conversation, and nothing
-    // is ever sent to a real number.
-    test: (message: string, history: Array<{ role: 'customer' | 'agent'; text: string }> = []) =>
-      post<AiTestResult>('/api/ai-agent/test', { message, history }, { timeoutMs: 60_000 }),
-    audit: (chatJid?: string, limit = 20) => {
-      const q = new URLSearchParams({ limit: String(limit) });
-      if (chatJid) q.set('chatJid', chatJid);
-      return get<{ rows: AiAuditRow[] }>(`/api/ai-agent/audit?${q}`);
-    },
   },
 
   agentPresence: (tabId: string, chatJid: string, typing: boolean) =>
@@ -605,38 +204,7 @@ export const api = {
 
   messageAgents: (ids: string[]) => post<MessageAgents>('/api/message-agents', { ids }),
 
-  blacklist: {
-    list: () => get<BlacklistEntry[]>('/api/blacklist'),
-    add: (entry: { phone_number: string; name?: string; why_blacklisted?: string }) =>
-      post<{ ok: boolean; added: number; invalid: string[] }>('/api/blacklist', entry),
-    addMany: (rows: Array<{ phone_number: string; name?: string; why_blacklisted?: string }>) =>
-      post<{ ok: boolean; added: number; invalid: string[] }>('/api/blacklist', { rows }),
-    update: (phone: string, patch: Partial<Pick<BlacklistEntry, 'phone_number' | 'name' | 'why_blacklisted'>>) =>
-      put<BlacklistEntry>(`/api/blacklist/${encodeURIComponent(phone)}`, patch),
-    remove: (phone: string) => del<{ ok: boolean }>(`/api/blacklist/${encodeURIComponent(phone)}`),
-    removeMany: (phones: string[]) =>
-      post<{ ok: boolean; removed: number }>('/api/blacklist/delete', { phones }),
-  },
-
-  // The dead-number cache (see types.ts#VerificationEntry). Instance-free like
-  // the blacklist: a number is on WhatsApp or it isn't, whichever line asked.
-  verification: {
-    list: (opts: { status?: VerifyStatus; q?: string; limit?: number; offset?: number } = {}) => {
-      const qs = new URLSearchParams();
-      if (opts.status) qs.set('status', opts.status);
-      if (opts.q) qs.set('q', opts.q);
-      qs.set('limit', String(opts.limit ?? 100));
-      qs.set('offset', String(opts.offset ?? 0));
-      return get<VerificationPage>(`/api/verification?${qs}`);
-    },
-    check: (numbers: string[]) => post<VerificationSweep>('/api/verification/check', { numbers }),
-    remove: (phone: string) =>
-      del<{ ok: boolean; removed: number }>(`/api/verification/${encodeURIComponent(phone)}`),
-    clear: (status?: VerifyStatus) =>
-      post<{ ok: boolean; cleared: number }>('/api/verification/clear', status ? { status } : {}),
-  },
-
-  send: (recipient: string, item: JobItem, isGroup = false) =>
+  send: (recipient: string, item: MessageItem, isGroup = false) =>
     ipost<SendResult>(
       '/api/send',
       { recipient, item, isGroup },

@@ -14,8 +14,6 @@ import { useToast } from './Toast';
 const DEFAULTS: NotifyPrefs = {
   groups: true,
   dms: true,
-  jobsEnded: true,
-  jobsFailuresOnly: false,
   quietEnabled: false,
   quietStart: '21:00',
   quietEnd: '08:00',
@@ -114,7 +112,7 @@ export function NotificationPrefsCard() {
       <div>
         <h3 className="text-sm font-semibold text-gray-700">Notifications</h3>
         <p className="text-xs text-gray-500">
-          Get a system notification for incoming messages and finished jobs — including when the app
+          Get a system notification for incoming messages — including when the app
           is closed (Web Push). On a phone, install the app first (browser menu → “Add to Home
           Screen”); iPhone requires iOS 16.4+ and the installed app. These preferences are yours
           alone.
@@ -163,24 +161,6 @@ export function NotificationPrefsCard() {
             label="Direct messages"
           />
         </Row>
-        <Row title="Job finished" hint="When a scheduled or bulk job you created completes.">
-          <Switch
-            on={p.jobsEnded}
-            disabled={save.isPending}
-            onToggle={() => save.mutate({ jobsEnded: !p.jobsEnded })}
-            label="Job finished"
-          />
-        </Row>
-        {p.jobsEnded && (
-          <Row title="Only when a job had failures" hint="Skip the ping for clean, fully-sent jobs.">
-            <Switch
-              on={p.jobsFailuresOnly}
-              disabled={save.isPending}
-              onToggle={() => save.mutate({ jobsFailuresOnly: !p.jobsFailuresOnly })}
-              label="Only failed jobs"
-            />
-          </Row>
-        )}
       </div>
 
       <div className="space-y-3 border-t border-gray-100 pt-3">

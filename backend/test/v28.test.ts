@@ -129,7 +129,7 @@ describe('v2.8 agent workbench', () => {
       expect(meta.statuses[phone].status).toBe('open');
     });
 
-    it('tags round-trip and resolve audiences by tag', async () => {
+    it('tags round-trip', async () => {
       await t.app.inject({
         method: 'POST', url: '/api/chats/tags',
         payload: { jid: '972521111111@s.whatsapp.net', tags: ['VIP', 'lead', 'VIP', ''] },
@@ -137,8 +137,6 @@ describe('v2.8 agent workbench', () => {
       const meta = (await t.app.inject({ method: 'GET', url: '/api/chat-meta' })).json();
       expect(meta.tags['972521111111@s.whatsapp.net']).toEqual(['lead', 'VIP']);
       expect(meta.allTags).toEqual(['lead', 'VIP']);
-      const byTag = (await t.app.inject({ method: 'GET', url: '/api/chats/by-tag?tag=VIP' })).json();
-      expect(byTag.jids).toEqual(['972521111111@s.whatsapp.net']);
     });
 
     it('notes: own-delete only, admins may delete any', async () => {

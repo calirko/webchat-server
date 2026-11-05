@@ -20,13 +20,9 @@ export interface ContactCardProps {
   /** loaded thread messages, for the shared-media summary */
   messages: ChatMsg[];
   blocked: boolean;
-  /** already on the send-time blacklist */
-  blacklisted: boolean;
   onSearch: () => void;
   onArchive: () => void;
   onToggleBlock: () => void;
-  /** open the blacklist form (number + reason) for this contact */
-  onBlacklist: () => void;
   onClose: () => void;
 }
 
@@ -47,11 +43,9 @@ export default function ContactCard({
   phone,
   messages,
   blocked,
-  blacklisted,
   onSearch,
   onArchive,
   onToggleBlock,
-  onBlacklist,
   onClose,
 }: ContactCardProps) {
   const [lightbox, setLightbox] = useState(false);
@@ -266,23 +260,6 @@ export default function ContactCard({
               <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M5 8h14M5 8a2 2 0 01-2-2V5a2 2 0 012-2h14a2 2 0 012 2v1a2 2 0 01-2 2M5 8v10a2 2 0 002 2h10a2 2 0 002-2V8m-9 4h4"/></svg>
               Archive chat
             </button>
-            {!conv.isGroup && (
-              <button
-                onClick={() => {
-                  onBlacklist();
-                  onClose();
-                }}
-                className="flex w-full items-center gap-3 border-t border-gray-100 px-4 py-3 text-left text-sm text-gray-700 hover:bg-gray-50"
-              >
-                <svg className="h-5 w-5 text-gray-400" fill="none" stroke="currentColor" strokeWidth={2} viewBox="0 0 24 24"><path strokeLinecap="round" strokeLinejoin="round" d="M18.364 5.636L5.636 18.364M21 12a9 9 0 11-18 0 9 9 0 0118 0z"/></svg>
-                <span>
-                  {blacklisted ? 'Blacklisted — edit reason' : 'Add to blacklist'}
-                  <span className="block text-xs text-gray-400">
-                    Campaigns skip the number; this chat keeps working
-                  </span>
-                </span>
-              </button>
-            )}
             {!conv.isGroup && (
               <button
                 onClick={onToggleBlock}

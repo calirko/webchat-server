@@ -73,7 +73,6 @@ export class ChatMetaStore {
       tagsAll: db.prepare(`SELECT chat_jid, tag FROM chat_tags ORDER BY tag COLLATE NOCASE`),
       tagsDel: db.prepare(`DELETE FROM chat_tags WHERE chat_jid = ?`),
       tagPut: db.prepare(`INSERT OR IGNORE INTO chat_tags (chat_jid, tag, created_at) VALUES (?, ?, ?)`),
-      taggedChats: db.prepare(`SELECT chat_jid FROM chat_tags WHERE tag = ? COLLATE NOCASE`),
 
       notesByChat: db.prepare(`SELECT * FROM chat_notes WHERE chat_jid = ? ORDER BY created_at ASC, id ASC`),
       noteById: db.prepare(`SELECT * FROM chat_notes WHERE id = ?`),
@@ -208,11 +207,6 @@ export class ChatMetaStore {
       for (const t of tags) this.q.tagPut.run(key, t, now);
     })();
     return key;
-  }
-
-  /** Canonical jids carrying a tag — Compose's "add by tag" audience. */
-  chatsWithTag(tag: string): string[] {
-    return (this.q.taggedChats.all(tag) as Array<{ chat_jid: string }>).map((r) => r.chat_jid);
   }
 
   // ---- notes -------------------------------------------------------------
