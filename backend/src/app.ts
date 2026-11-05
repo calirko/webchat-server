@@ -171,7 +171,7 @@ export async function buildApp(opts: BuildOptions): Promise<App> {
   // identity the provision hook above just recorded.
   const guard = (key: PermissionKey) => requirePerm(key, { cfg, agents });
 
-  registerMeta(app);
+  registerMeta(app, relay);
   registerSending(app, sender, cfg, agents, chatMeta, instanceAccess);
   registerAgents(app, agents, cfg, guard('agents.manage'), { meta: chatMeta, emit, access: instanceAccess });
   registerChats(app, { cfg, meta: chatMeta, agents, presence, emit });

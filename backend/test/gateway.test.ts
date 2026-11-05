@@ -398,6 +398,9 @@ describe('API token auth', () => {
   });
 
   it('leaves /api/health open for probing', async () => {
-    expect((await t.app.inject({ method: 'GET', url: '/api/health' })).statusCode).toBe(200);
+    const res = await t.app.inject({ method: 'GET', url: '/api/health' });
+    expect(res.statusCode).toBe(200);
+    // the test relay never starts an upstream socket
+    expect(res.json().events).toBe('off');
   });
 });

@@ -13,9 +13,18 @@ function readVersion(): string {
   }
 }
 
-export function registerMeta(app: FastifyInstance): void {
+export function registerMeta(
+  app: FastifyInstance,
+  relay?: { upstreamStatus: 'off' | 'connected' | 'disconnected' },
+): void {
   const version = readVersion();
 
-  // Health / mode probe — the SPA uses this to detect "server mode".
-  app.get('/api/health', async () => ({ ok: true, mode: 'server', version }));
+  // Health / mode probe. `events` is whether Evolution's websocket is actually
+  // delivering — when it isn't, the UI says so instead of just feeling slow.
+  app.get('/api/health', async () => ({
+    ok: true,
+    mode: 'server',
+    version,
+    events: relay?.upstreamStatus ?? 'off',
+  }));
 }

@@ -25,6 +25,10 @@ self.addEventListener('push', (event) => {
   const options = {
     body: data.body || '',
     tag: data.tag, // collapse repeats per chat
+    // a second message in the same chat replaces the notification — renotify
+    // makes it sound/vibrate again instead of updating silently
+    renotify: !!data.tag,
+    silent: false,
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
     data: { url: data.url || '/' },

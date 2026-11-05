@@ -2,6 +2,7 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { useCallback, useEffect, useRef, useState, useSyncExternalStore, type ReactElement } from 'react';
 import { BrowserRouter, Link, Navigate, Route, Routes, useLocation, useNavigate } from 'react-router-dom';
 import ConnectLineModal from './components/ConnectLineModal';
+import { InboxBanners } from './components/InboxBanners';
 import { ConfirmProvider } from './components/Confirm';
 import { ToastProvider, useToast } from './components/Toast';
 import { agentBadgeClass, agentLabel, useIsAdmin, useMe } from './lib/agents';
@@ -10,6 +11,8 @@ import { setActiveInstance, useActiveInstance, useInstances } from './lib/instan
 import { convTimestamp } from './lib/chatModel';
 import { effectiveUnread, readMarksVersion, subscribeReadMarks } from './lib/readMarks';
 import { useWorkbenchNotifications } from './lib/workbench';
+import { useBusState } from './lib/eventBus';
+import { useLiveInbox } from './lib/useEvents';
 import { applyTheme, initialTheme, type Theme } from './lib/theme';
 import ChatPage from './pages/ChatPage';
 import GroupsPage from './pages/GroupsPage';
@@ -247,9 +250,13 @@ function App() {
   // an open thread takes the whole mobile viewport — hide the tab bar (the
   // thread header's ← already leads back to the list)
   const [threadOpen, setThreadOpen] = useState(false);
-  const health = useQuery({ queryKey: ['health'], queryFn: api.health, refetchInterval: 60_000 });
+  const health = useQuery({ queryKey: ['health'], queryFn: api.health, refetchInterval: 30_000 });
   const me = useMe();
   useWorkbenchNotifications(useToast());
+  // live messages + notifications, on every tab (not just Chat)
+  useLiveInbox();
+  const busState = useBusState();
+  const liveDegraded = busState !== 'open' || health.data?.events === 'disconnected';
   const { tabs, hidden } = useVisibleTabs();
   // Settings is pinned as its own gear icon, not part of the tab strip.
   const navTabs = tabs.filter((t) => t.id !== 'settings');
@@ -301,13 +308,14 @@ function App() {
   // is not the primary path — but the chat list has no other periodic refresh
   // (focus refetching is off), so a dropped SSE event or a missed invalidation
   // would otherwise leave the list stale indefinitely. App is always mounted,
-  // so one slow poll here covers every consumer of ['chats']; concurrent tabs
-  // collapse into a single upstream call server-side.
+  // so one poll here covers every consumer of ['chats']; concurrent tabs
+  // collapse into a single upstream call server-side. While live updates are
+  // down it is the ONLY path, so it tightens from 60s to 10s.
   const chats = useQuery({
     queryKey: ['chats'],
     queryFn: api.chats.list,
-    staleTime: 20_000,
-    refetchInterval: 60_000,
+    staleTime: 10_000,
+    refetchInterval: liveDegraded ? 10_000 : 60_000,
   });
   useSyncExternalStore(subscribeReadMarks, readMarksVersion); // re-render on read-mark changes
   const unreadTotal = (Array.isArray(chats.data) ? chats.data : []).reduce(
@@ -458,6 +466,7 @@ function App() {
           )}
         </div>
       </nav>
+      <InboxBanners upstream={health.data?.events} />
       <main className="min-h-0 flex-1">
         <Routes>
           <Route path="/" element={<Navigate to="/chat" replace />} />

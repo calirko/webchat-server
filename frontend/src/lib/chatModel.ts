@@ -855,26 +855,138 @@ export async function fetchThread(
   pageCount: number,
   fetchPage: (jid: string, page: number) => Promise<unknown>,
 ): Promise<ThreadFetchResult> {
-  const byId = new Map<string, ChatMsg>();
-  let hasMore = false;
-  for (const jid of jids) {
-    for (let page = 1; page <= pageCount; page++) {
-      let data: unknown;
-      try {
-        data = await fetchPage(jid, page);
-      } catch {
-        break; // one jid failing must not blank the whole thread
+  // Each JID's pages are fetched in order (page N tells us whether N+1
+  // exists), but the JIDs themselves are independent — a @lid + phone thread
+  // used to pay two serial findMessages round-trips on every refresh.
+  const perJid = await Promise.all(
+    jids.map(async (jid) => {
+      const found: ChatMsg[] = [];
+      let more = false;
+      for (let page = 1; page <= pageCount; page++) {
+        let data: unknown;
+        try {
+          data = await fetchPage(jid, page);
+        } catch {
+          break; // one jid failing must not blank the whole thread
+        }
+        found.push(...extractMessages(data));
+        const total = extractTotalPages(data);
+        if (total > pageCount) more = true;
+        if (page >= total) break;
       }
-      for (const m of extractMessages(data)) byId.set(m.id, m);
-      const total = extractTotalPages(data);
-      if (total > pageCount) hasMore = true;
-      if (page >= total) break;
-    }
-  }
+      return { found, more };
+    }),
+  );
+  const byId = new Map<string, ChatMsg>();
+  for (const { found } of perJid) for (const m of found) byId.set(m.id, m);
   return {
     // fold edits onto their targets across ALL pages/jids before sorting —
     // an edit and its original can land on different pages
     records: applyEdits([...byId.values()]).sort((a, b) => a.timestamp - b.timestamp),
-    hasMore,
+    hasMore: perJid.some((r) => r.more),
   };
+}
+
+/**
+ * A refetch result folded onto what the thread already shows: previous ∪
+ * fresh, fresh winning per id (so edits / deletes / status still apply). The
+ * thread renders a "newest N pages" window, so a plain refetch would drop the
+ * oldest loaded message as new ones push it past the page boundary — and live
+ * messages written straight into the cache must survive a refetch that raced
+ * them. Pure + unit-tested.
+ */
+export function mergeThreadRecords(
+  prev: ThreadFetchResult | undefined,
+  fresh: ThreadFetchResult,
+): ThreadFetchResult {
+  if (!prev?.records.length) return fresh;
+  const byId = new Map(prev.records.map((m) => [m.id, m]));
+  for (const m of fresh.records) byId.set(m.id, m);
+  return {
+    records: [...byId.values()].sort((a, b) => a.timestamp - b.timestamp),
+    hasMore: fresh.hasMore,
+  };
+}
+
+/**
+ * Apply records that just arrived on the live event stream to a cached thread,
+ * so a new message renders the moment its event lands instead of after a full
+ * findMessages round-trip. New messages and reactions are added (an id already
+ * present is left alone — the copy from the server may carry enrichments the
+ * live record lacks); an edit rewrites its target's text and history; a
+ * delete-for-everyone flags its target. Control records whose target isn't
+ * loaded are dropped — the background refetch picks them up. Returns `prev`
+ * itself when nothing changed, so callers can skip a re-render.
+ */
+export function applyLiveMessages(prev: ThreadFetchResult, incoming: ChatMsg[]): ThreadFetchResult {
+  let records = prev.records;
+  let changed = false;
+  const indexOf = (id: string) => records.findIndex((m) => m.id === id);
+  const patch = (i: number, next: ChatMsg) => {
+    if (!changed) records = [...records];
+    records[i] = next;
+    changed = true;
+  };
+  for (const m of incoming) {
+    if (m.type === 'edit' || m.type === 'delete') {
+      const i = m.editTargetId ? indexOf(m.editTargetId) : -1;
+      if (i === -1) continue;
+      const target = records[i]!;
+      if (m.type === 'delete') {
+        if (!target.deletedBySender) patch(i, { ...target, deletedBySender: true });
+        continue;
+      }
+      const text = m.text || target.text;
+      const caption = m.caption || target.caption;
+      if (text === target.text && caption === target.caption) continue;
+      const before = target.text || target.caption;
+      patch(i, {
+        ...target,
+        text,
+        caption,
+        edited: true,
+        editHistory: before ? [...target.editHistory, before] : target.editHistory,
+      });
+      continue;
+    }
+    if (indexOf(m.id) !== -1) continue;
+    if (!changed) records = [...records];
+    records.push(m);
+    changed = true;
+  }
+  if (!changed) return prev;
+  return { ...prev, records: records.sort((a, b) => a.timestamp - b.timestamp) };
+}
+
+/**
+ * Bump the chat-list row a live message belongs to (raw findChats records, as
+ * cached under ['chats']): new last message + timestamp, and one more unread
+ * for an incoming message the agent isn't already looking at. Matches the row
+ * by its jid or the message's alt jid (@lid ↔ phone). Returns null when no row
+ * matches — a brand-new conversation needs the real refetch.
+ */
+export function applyLiveToChats(
+  chats: Array<Record<string, any>>,
+  record: Record<string, any>,
+  opts: { countUnread: boolean },
+): Array<Record<string, any>> | null {
+  const key = record?.key ?? {};
+  const jids = [key.remoteJid, key.remoteJidAlt].filter(
+    (j): j is string => typeof j === 'string' && !!j,
+  );
+  if (!jids.length) return null;
+  const i = chats.findIndex((c) => jids.includes(c.remoteJid ?? c.id));
+  if (i === -1) return null;
+  const row = chats[i]!;
+  const ts = tsNum(record.messageTimestamp) || Date.now();
+  // an older record (history replay, a late ack-borne copy) must not rewind the row
+  if (ts < convTimestamp(row)) return chats;
+  const next = [...chats];
+  next[i] = {
+    ...row,
+    lastMessage: record,
+    lastMsgTimestamp: ts,
+    unreadCount: (row.unreadCount ?? 0) + (opts.countUnread && !key.fromMe ? 1 : 0),
+  };
+  return next;
 }

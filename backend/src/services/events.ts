@@ -15,6 +15,7 @@ type Logger = (msg: string) => void;
  */
 export class EventRelay {
   private socket: Socket | null = null;
+  private connected = false;
   private readonly listeners = new Set<Listener>();
 
   constructor(
@@ -51,10 +52,18 @@ export class EventRelay {
       // and backend listeners are instance-aware via the envelope tag.
       this.broadcast({ event, data });
     });
-    this.socket.on('connect', () => this.log('[events] connected to Evolution websocket'));
-    this.socket.on('connect_error', (e: Error) =>
-      this.log(`[events] Evolution websocket unavailable (${e.message}) — retrying`),
-    );
+    this.socket.on('connect', () => {
+      this.connected = true;
+      this.log('[events] connected to Evolution websocket');
+    });
+    this.socket.on('disconnect', (reason: string) => {
+      this.connected = false;
+      this.log(`[events] Evolution websocket disconnected (${reason}) — reconnecting`);
+    });
+    this.socket.on('connect_error', (e: Error) => {
+      this.connected = false;
+      this.log(`[events] Evolution websocket unavailable (${e.message}) — retrying`);
+    });
   }
 
   /** Locked to one channel: other instances' traffic never enters the app. */
@@ -71,6 +80,7 @@ export class EventRelay {
     this.socket.removeAllListeners();
     this.socket.disconnect();
     this.socket = null;
+    this.connected = false;
   }
 
   /**
@@ -88,6 +98,16 @@ export class EventRelay {
   /** Whether the upstream socket exists (it may still be retrying connects). */
   get upstreamActive(): boolean {
     return !!this.socket;
+  }
+
+  /**
+   * Upstream status for /api/health: 'off' (relay disabled/unconfigured),
+   * 'connected', or 'disconnected' (socket exists but Evolution isn't
+   * delivering — browsers then only see changes on their polling fallback).
+   */
+  get upstreamStatus(): 'off' | 'connected' | 'disconnected' {
+    if (!this.socket) return 'off';
+    return this.connected ? 'connected' : 'disconnected';
   }
 
   subscribe(fn: Listener): () => void {

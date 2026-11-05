@@ -117,7 +117,14 @@ export interface NotifyPrefs {
 }
 
 export const api = {
-  health: () => get<{ ok: boolean; mode: string; version: string }>('/api/health'),
+  health: () =>
+    get<{
+      ok: boolean;
+      mode: string;
+      version: string;
+      /** Evolution websocket → server: whether live events are being delivered. */
+      events?: 'off' | 'connected' | 'disconnected';
+    }>('/api/health'),
 
   settings: {
     get: () => get<ServerSettings>('/api/settings'),

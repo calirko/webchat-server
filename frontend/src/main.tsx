@@ -3,6 +3,7 @@ import { StrictMode } from 'react';
 import { createRoot } from 'react-dom/client';
 import App from './App';
 import { notificationsEnabled, registerServiceWorker, subscribePush } from './lib/notify';
+import { installSoundUnlock } from './lib/sound';
 import { applyTheme, initialTheme } from './lib/theme';
 import './index.css';
 
@@ -14,6 +15,8 @@ registerServiceWorker();
 // device, a rotated subscription, or users from before push existed. Best
 // effort; the in-page path still works without it.
 if (notificationsEnabled()) void subscribePush().catch(() => {});
+// the message chime needs one user gesture before the browser lets it play
+installSoundUnlock();
 
 const queryClient = new QueryClient({
   defaultOptions: {

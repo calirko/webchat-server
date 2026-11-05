@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useSyncExternalStore } from 'react';
 
 /**
  * One shared EventSource for the whole app. Every hook used to open its own
@@ -14,6 +14,43 @@ let es: EventSource | null = null;
 let retryTimer: ReturnType<typeof setTimeout> | null = null;
 let attached = new Set<string>();
 let total = 0;
+
+/**
+ * Live-stream health for the UI: 'open' while events flow, 'connecting' during
+ * a (re)connect. An outage used to be invisible — the app just felt slow,
+ * because the only fallbacks are the 10s thread poll and 60s list poll.
+ */
+export type BusState = 'connecting' | 'open';
+let state: BusState = 'connecting';
+let everOpened = false;
+let retryDelay = 1000;
+const stateListeners = new Set<() => void>();
+const reconnectListeners = new Set<() => void>();
+
+function setState(next: BusState): void {
+  if (next === state) return;
+  state = next;
+  for (const fn of stateListeners) fn();
+}
+
+export function useBusState(): BusState {
+  return useSyncExternalStore(
+    (fn) => {
+      stateListeners.add(fn);
+      return () => stateListeners.delete(fn);
+    },
+    () => state,
+  );
+}
+
+/**
+ * Called each time the stream comes back after having been open — events in
+ * the gap are lost for good, so listeners refetch whatever they keep live.
+ */
+export function onBusReconnect(fn: () => void): () => void {
+  reconnectListeners.add(fn);
+  return () => reconnectListeners.delete(fn);
+}
 
 function dispatchTo(event: string, e: MessageEvent): void {
   let data: unknown;
@@ -37,19 +74,34 @@ function attach(event: string): void {
   es.addEventListener(event, (e) => dispatchTo(event, e as MessageEvent));
 }
 
+function scheduleRetry(): void {
+  if (total <= 0 || retryTimer) return;
+  retryTimer = setTimeout(connect, retryDelay);
+  retryDelay = Math.min(retryDelay * 2, 15_000); // 1s, 2s, 4s … capped at 15s
+}
+
 function connect(): void {
   retryTimer = null;
+  setState('connecting');
   es = new EventSource('/api/events');
   attached = new Set();
   for (const event of handlers.keys()) attach(event);
-  // EventSource auto-retries only network drops; an HTTP error response
-  // (e.g. a proxy 502 while the backend restarts) closes it permanently —
-  // recreate the stream ourselves or live updates die until a full reload
+  es.onopen = () => {
+    retryDelay = 1000;
+    setState('open');
+    if (everOpened) for (const fn of reconnectListeners) fn();
+    everOpened = true;
+  };
+  // EventSource auto-retries only network drops (on its own `retry:` clock);
+  // an HTTP error response (e.g. a proxy 502 while the backend restarts)
+  // closes it permanently — recreate the stream ourselves with backoff or
+  // live updates die until a full reload.
   es.onerror = () => {
+    setState('connecting');
     if (es?.readyState === EventSource.CLOSED) {
       es.close();
       es = null;
-      if (total > 0 && !retryTimer) retryTimer = setTimeout(connect, 5000);
+      scheduleRetry();
     }
   };
 }
@@ -74,6 +126,7 @@ export function subscribeBus(event: string, fn: BusHandler): () => void {
       retryTimer = null;
       es?.close();
       es = null;
+      setState('connecting');
     }
   };
 }

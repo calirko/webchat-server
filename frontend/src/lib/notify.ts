@@ -6,6 +6,7 @@
  */
 
 import type { NotifyPrefs } from './api';
+import { isLooking } from './attention';
 
 const ENABLED_KEY = 'wa_notify';
 
@@ -155,17 +156,28 @@ async function unsubscribePush(): Promise<void> {
 }
 
 /**
- * Show a message notification — only when enabled and the app is hidden.
- * `url` is the deep-link the click opens (e.g. `/?chat=<jid>&msg=<id>`); the SW
- * routes it in-page (see public/sw.js, App deep-link handling).
+ * Show a system notification — only when enabled and the agent isn't looking
+ * at the app (tab hidden, or another window focused). `url` is the deep-link
+ * the click opens (e.g. `/?chat=<jid>&msg=<id>`); the SW routes it in-page
+ * (see public/sw.js, App deep-link handling). `tag` collapses repeats — use
+ * the canonical chat jid so this and the server's Web Push for the same chat
+ * replace each other instead of stacking. `silent` when the in-page chime
+ * already played, so the OS doesn't add its own sound on top.
  */
-export function notifyMessage(title: string, body: string, tag: string, url?: string): void {
-  if (!notificationsEnabled() || document.visibilityState === 'visible') return;
+export function notifyMessage(
+  title: string,
+  body: string,
+  tag: string,
+  url?: string,
+  opts: { silent?: boolean } = {},
+): void {
+  if (!notificationsEnabled() || isLooking()) return;
   const options: NotificationOptions = {
     body,
-    tag, // collapse repeated notifications per chat
+    tag,
     icon: '/icons/icon-192.png',
     badge: '/icons/icon-192.png',
+    silent: !!opts.silent,
     data: { url: url || '/' },
   };
   navigator.serviceWorker?.getRegistration().then((reg) => {
@@ -179,4 +191,10 @@ export function notifyMessage(title: string, body: string, tag: string, url?: st
       }
     }
   });
+}
+
+/** Whether to offer the "turn on notifications" prompt on this device. */
+export function shouldOfferNotifications(): boolean {
+  if (!('Notification' in window) || notificationsEnabled()) return false;
+  return Notification.permission !== 'denied';
 }

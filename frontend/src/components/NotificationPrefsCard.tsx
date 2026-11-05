@@ -8,6 +8,7 @@ import {
   notificationsEnabled,
   notificationsSupported,
 } from '../lib/notify';
+import { playChime, setSoundEnabled, soundEnabled } from '../lib/sound';
 import { Switch } from './Switch';
 import { useToast } from './Toast';
 
@@ -52,6 +53,7 @@ export function NotificationPrefsCard() {
   const qc = useQueryClient();
   const [enabled, setEnabled] = useState(notificationsEnabled);
   const [testing, setTesting] = useState(false);
+  const [sound, setSound] = useState(soundEnabled);
 
   const prefsQ = useQuery({ queryKey: ['notifyPrefs'], queryFn: api.notifyPrefs.get });
   const p = prefsQ.data ?? DEFAULTS;
@@ -105,6 +107,13 @@ export function NotificationPrefsCard() {
     }
   }
 
+  function toggleSound() {
+    const next = !sound;
+    setSoundEnabled(next);
+    setSound(next);
+    if (next) playChime({ force: true });
+  }
+
   const keywordsDirty = keywords.trim() !== p.keywords;
 
   return (
@@ -112,7 +121,8 @@ export function NotificationPrefsCard() {
       <div>
         <h3 className="text-sm font-semibold text-gray-700">Notifications</h3>
         <p className="text-xs text-gray-500">
-          Get a system notification for incoming messages — including when the app
+          A chime when a message arrives in a chat you don’t have open, and a system notification
+          when the app is in the background — including when the app
           is closed (Web Push). On a phone, install the app first (browser menu → “Add to Home
           Screen”); iPhone requires iOS 16.4+ and the installed app. These preferences are yours
           alone.
@@ -128,6 +138,21 @@ export function NotificationPrefsCard() {
         ) : (
           <span className="text-xs text-amber-600">Not supported in this browser</span>
         )}
+      </Row>
+
+      <Row
+        title="Sound"
+        hint="Chime for new messages on this device. Muted categories and quiet hours below apply to it too."
+      >
+        <span className="flex items-center gap-2">
+          <button
+            onClick={() => playChime({ force: true })}
+            className="rounded-md px-2 py-1 text-xs font-medium text-wa-dark hover:bg-green-50"
+          >
+            Play
+          </button>
+          <Switch on={sound} onToggle={toggleSound} label="Message sound" />
+        </span>
       </Row>
 
       <div className="flex flex-wrap items-center gap-2 border-t border-gray-100 pt-3">

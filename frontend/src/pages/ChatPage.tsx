@@ -20,6 +20,7 @@ import {
   displayConvNumber,
   displayNumber,
   fetchThread,
+  mergeThreadRecords,
 } from '../lib/chatModel';
 import {
   clearReadMark,
@@ -39,7 +40,8 @@ import {
   type ThreadFetchResult,
 } from '../lib/chatModel';
 import { applyLocalDeletes, buildOptimistic, matchReconciled, mergePending, reconcilePending, type LocalDelete, type PendingSend } from '../lib/optimistic';
-import { refreshChats, useEvents } from '../lib/useEvents';
+import { setOpenChat } from '../lib/attention';
+import { refreshChats, usePresence } from '../lib/useEvents';
 import { fileToBase64, VoiceRecorder } from '../lib/voice';
 import AttachPreview from './chat/AttachPreview';
 import ContactCard from './chat/ContactCard';
@@ -228,6 +230,12 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
   // Incoming messages often live under the contact's @lid alias JID — fetch
   // and merge every JID this conversation maps to (the v1-proven approach).
   const jids = useMemo(() => threadJids(jid, aliases), [jid, aliases]);
+  // Tell the live inbox which conversation is on screen, so a message for it
+  // neither chimes nor counts as unread while the agent is looking at it.
+  useEffect(() => {
+    setOpenChat(jids);
+    return () => setOpenChat(null);
+  }, [jids]);
   const [pageCount, setPageCount] = useState(1);
   const messages = useQuery({
     // keyed on the JID *set* — an alias substitution must refetch even when
@@ -235,21 +243,10 @@ function Thread({ conv, convs, names, aliases, presence, jumpTo, onBack, onArchi
     queryKey: ['messages', jid, [...jids].sort().join(','), pageCount],
     queryFn: async ({ queryKey }) => {
       const fresh = await fetchThread(jids, pageCount, (j, p) => api.chats.messages(j, p));
-      // The thread renders a "newest N pages" window. As messages accumulate the
-      // oldest LOADED one slides past the page boundary, so a plain refetch drops
-      // it — and after every send the whole list reflows/reorders by that row's
-      // height (the visible jump). Keep what we've already shown: union previous
-      // ∪ fresh, fresh winning per id so edits / deletes / status still apply.
-      // Bounded by the open chat; the key includes jid+pageCount, so it resets on
-      // chat switch or when older pages are loaded.
-      const prev = qc.getQueryData<ThreadFetchResult>(queryKey)?.records ?? [];
-      if (!prev.length) return fresh;
-      const byId = new Map(prev.map((m) => [m.id, m]));
-      for (const m of fresh.records) byId.set(m.id, m);
-      return {
-        records: [...byId.values()].sort((a, b) => a.timestamp - b.timestamp),
-        hasMore: fresh.hasMore,
-      };
+      // keep what's already shown (older loaded rows, live-inserted messages);
+      // fresh wins per id — see mergeThreadRecords. Keyed on jid+pageCount, so
+      // it resets on chat switch or when older pages are loaded.
+      return mergeThreadRecords(qc.getQueryData<ThreadFetchResult>(queryKey), fresh);
     },
     // 10s (was 25s): deletes/edits made on the phone emit no realtime event we
     // can refresh on, so the open thread catches them on this poll — only runs
@@ -1602,7 +1599,7 @@ export default function ChatPage({ onThreadOpenChange, openChat, onChatOpened }:
     queryFn: api.chats.groups,
     staleTime: 5 * 60_000,
   });
-  const presence = useEvents();
+  const presence = usePresence();
   // Workbench data for list decorations and the Mine/Pending/Resolved filters.
   const me = useMe();
   const chatMeta = useChatMeta();

@@ -39,7 +39,7 @@ export function registerEvents(
     reply.raw.socket?.setNoDelay(true);
     // 2 KB comment padding flushes any remaining intermediary buffer so the
     // EventSource fires `open`/first events immediately.
-    reply.raw.write(`:${' '.repeat(2048)}\n\nretry: 3000\n\n`);
+    reply.raw.write(`:${' '.repeat(2048)}\n\nretry: 1000\n\n`);
 
     const unsubscribe = relay.subscribe((e) => {
       if (access && !APP_EVENTS.has(e.event)) {
