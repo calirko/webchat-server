@@ -1,22 +1,26 @@
+# Production compose for mkserver, deployed by Dokploy (app webchat-webchat-e7zst7)
+# on every push to master. Env vars come from the Dokploy Environment tab (.env).
+#
+# Nginx Proxy Manager forwards webchat.megakontroll.com.br to the container by
+# name on the mkserver-shared network, so there is no host port and the
+# container_name must stay as is.
+#
+# Running somewhere else? Drop container_name/networks, add `ports: ["8080:8080"]`
+# and point the volume at ./data.
 services:
   webchat:
     build: .
+    container_name: webchat-server-webchat-1
     restart: unless-stopped
     env_file: .env
     environment:
-      # Every 'HH:MM' the server acts on — quiet hours, a campaign's sending
-      # window — is that clock in the CONTAINER's zone. Without this it is UTC,
-      # so "pause at 21:00" would fire at midnight local time.
-      TZ: ${TZ:-Asia/Jerusalem}
+      # HH:MM values (reminders, retention sweep) use the container's clock.
+      TZ: ${TZ:-America/Sao_Paulo}
     volumes:
-      # SQLite database (jobs, send ledger, blacklist)
-      - ./data:/app/data
-    ports:
-      - "8080:8080"
-    # Running behind a tunnel/reverse-proxy on a shared docker network instead?
-    # Drop the ports: mapping and uncomment:
-    # networks: [app-network]
+      # Prod SQLite DB (+ WAL), kept where the pre-Dokploy deploy left it.
+      - /opt/whatsapp-ui/webchat-server/data:/app/data
+    networks: [mkserver-shared]
 
-# networks:
-#   app-network:
-#     external: true
+networks:
+  mkserver-shared:
+    external: true
