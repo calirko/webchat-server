@@ -4,6 +4,7 @@ import { agentBadgeClass, agentLabel, useAgents } from '../../lib/agents';
 import { api } from '../../lib/api';
 import { useChatMeta } from '../../lib/workbench';
 import type { ChatMsg, Conv } from '../../lib/chatModel';
+import ImageViewer from '../../components/ImageViewer';
 
 const STATUS_META: Record<string, { label: string; cls: string }> = {
   open: { label: 'Open', cls: 'bg-blue-100 text-blue-700' },
@@ -279,27 +280,9 @@ export default function ContactCard({
         </div>
       </aside>
 
-      {/* full-size picture lightbox */}
+      {/* full-size picture viewer (pinch / double-tap to zoom) */}
       {lightbox && conv.profilePicUrl && (
-        <div
-          className="fixed inset-0 z-50 flex items-center justify-center bg-black/90 p-4"
-          onClick={() => setLightbox(false)}
-        >
-          <button
-            onClick={() => setLightbox(false)}
-            aria-label="Close"
-            className="absolute right-4 top-4 flex h-10 w-10 items-center justify-center rounded-full text-2xl text-white/80 hover:bg-white/10"
-          >
-            ✕
-          </button>
-          <img
-            src={conv.profilePicUrl}
-            alt={conv.name}
-            draggable={false}
-            onClick={(e) => e.stopPropagation()}
-            className="max-h-[90vh] max-w-[90vw] rounded-lg object-contain"
-          />
-        </div>
+        <ImageViewer url={conv.profilePicUrl} alt={conv.name} onClose={() => setLightbox(false)} />
       )}
     </>
   );

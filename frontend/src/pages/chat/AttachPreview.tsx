@@ -44,7 +44,7 @@ export default function AttachPreview({ file, media, initialCaption, sending, on
       role="dialog"
       aria-modal="true"
       aria-label="Attachment preview"
-      className="fixed inset-0 z-50 flex flex-col bg-[#0f0f0f]/95"
+      className="fixed inset-0 z-50 flex flex-col bg-[#0f0f0f]/95 pt-[env(safe-area-inset-top)]"
     >
       <div className="flex items-center gap-3 px-4 py-3 text-white">
         <button
@@ -82,7 +82,7 @@ export default function AttachPreview({ file, media, initialCaption, sending, on
       </div>
 
       <form
-        className="flex items-center gap-2 p-4"
+        className="flex items-center gap-2 p-4 pb-[max(1rem,env(safe-area-inset-bottom))]"
         onSubmit={(e) => {
           e.preventDefault();
           onSend(kind === 'audio' ? '' : caption.trim());

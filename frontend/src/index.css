@@ -299,3 +299,15 @@ select {
   background-color: #1c1c1c;
   color: var(--color-gray-800);
 }
+
+/* iOS Safari zooms the page into any focused field under 16px and leaves it
+   zoomed after blur — nearly every input here is text-sm (14px). On touch
+   devices bump form fields to 16px so focusing the composer or a search box
+   doesn't shift the whole layout. */
+@media (pointer: coarse) {
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  textarea,
+  select {
+    font-size: 16px;
+  }
+}
